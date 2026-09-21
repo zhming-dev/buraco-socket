@@ -746,6 +746,25 @@ class BraziliaServer {
         // `dev_change_cards` socket event — see SocketHandlers.changePlayerCards
         // for the full payload contract. Body:
         //   { roomId, target_user, change_cards: [{suit, rank} | {cardId}] }
+        // Dev: swap two physical cards between the deck / a well / any hand.
+        if (req.method === 'POST' && req.url.startsWith('/webhooks/dev-swap-cards')) {
+          (async () => {
+            try {
+              if (this.config.security.webhookSecret && req.headers['x-webhook-secret'] !== this.config.security.webhookSecret) {
+                sendJson(res, 401, { success: false, error: 'Unauthorized' });
+                return;
+              }
+              const data = await readJsonBody(req);
+              const result = this.socketHandlers.swapPlayerCards(data);
+              sendJson(res, result.success ? 200 : 400, result);
+            } catch (error) {
+              logger.error('[WEBHOOK] dev-swap-cards failed', { requestId, error: error.message });
+              sendJson(res, 500, { success: false, error: 'Internal Server Error' });
+            }
+          })();
+          return;
+        }
+
         if (req.method === 'POST' && req.url.startsWith('/webhooks/dev-change-cards')) {
           let body = '';
           req.on('data', (chunk) => {

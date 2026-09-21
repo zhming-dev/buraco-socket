@@ -4758,6 +4758,92 @@ class SocketHandlers {
   }
 
   /**
+   * Dev-only: SWAP two physical cards wherever they sit among the free zones —
+   * the draw deck, a well, or any player's hand. Both instances trade places
+   * (same index in each container), so every card stays in the game exactly
+   * once and no zone changes size. A card on the table (a meld) or in the
+   * discard pile is refused: moving those would rewrite visible history.
+   *
+   * Body: { roomId, a: { cardId }, b: { cardId } }  (POST /webhooks/dev-swap-cards)
+   * @param {object} data
+   * @returns {{success: boolean, error?: string, a?: object, b?: object}}
+   */
+  swapPlayerCards(data = {}) {
+    return logger.runWithRoom(data?.roomId, () => this._swapPlayerCardsImpl(data));
+  }
+
+  _swapPlayerCardsImpl(data = {}) {
+    const roomId = data.roomId === null || data.roomId === undefined ? null : String(data.roomId);
+    if (!roomId) return { success: false, error: 'roomId required' };
+    const room = this.gameService.getRoom(roomId);
+    if (!room) return { success: false, error: 'Room not found' };
+    if (!room.isInProgress || !room.isInProgress()) return { success: false, error: 'Game is not in progress' };
+    if (!room.cardsDealt || !room.deck) return { success: false, error: 'Cards have not been dealt yet' };
+
+    const idOf = (entry) => {
+      const raw = entry && typeof entry === 'object' ? (entry.cardId ?? entry.instanceId) : entry;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const aId = idOf(data.a);
+    const bId = idOf(data.b);
+    if (aId === null || bId === null) return { success: false, error: 'a.cardId and b.cardId required' };
+    if (aId === bId) return { success: false, error: 'Pick two different cards' };
+
+    // Free containers only: [label, array]. Hands are keyed by seat for the log.
+    const containers = [{ where: 'deck', cards: room.deck.cards }];
+    (room.deadPiles || []).forEach((pile, i) => {
+      if (Array.isArray(pile)) containers.push({ where: `well ${i + 1}`, cards: pile });
+    });
+    for (const p of room.getPlayers()) {
+      containers.push({ where: `seat ${p.playerIndex} hand`, cards: room.playerHands.get(p.playerId) || [], playerId: p.playerId, seat: p.playerIndex });
+    }
+    const locate = (cardId) => {
+      for (const c of containers) {
+        const idx = c.cards.findIndex((card) => card.cardId === cardId);
+        if (idx !== -1) return { ...c, idx, card: c.cards[idx] };
+      }
+      return null;
+    };
+    const a = locate(aId);
+    const b = locate(bId);
+    if (!a || !b) {
+      const missing = [];
+      if (!a) missing.push({ cardId: aId, where: this._locateCardInstances(room, { cardId: aId }, { playerId: null }) });
+      if (!b) missing.push({ cardId: bId, where: this._locateCardInstances(room, { cardId: bId }, { playerId: null }) });
+      return {
+        success: false,
+        error:
+          'Only cards in the deck, a well or a hand can be swapped: ' +
+          missing.map((m) => `#${m.cardId} (${m.where.length ? m.where.join(', ') : 'not in the game'})`).join('; '),
+        missing,
+      };
+    }
+
+    // Trade places in one step — no intermediate state where a card is missing.
+    a.cards[a.idx] = b.card;
+    b.cards[b.idx] = a.card;
+
+    this._sendGameStateUpdate(room);
+    const brief = (loc) => ({
+      cardId: loc.card.cardId,
+      suit: loc.card.suit,
+      rank: loc.card.rank,
+      from: loc.where,
+      playerId: loc.playerId ?? null,
+      seat: loc.seat ?? null,
+    });
+    logger.info('[DEV_CHANGE_CARDS] cards swapped', {
+      roomId,
+      swap: true,
+      a: brief(a),
+      b: brief(b),
+      deckCount: room.deck.count,
+    });
+    return { success: true, roomId, a: brief(a), b: brief(b), deckCount: room.deck.count };
+  }
+
+  /**
    * Where every instance of a requested card currently sits, for the
    * change-cards rejection message. Only the places a dev replace may NOT
    * touch are reported (other hands, melds, discard pile); free copies were

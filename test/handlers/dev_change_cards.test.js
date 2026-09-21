@@ -300,6 +300,47 @@ describe('dev_change_cards (dev hand surgery)', () => {
     }
   });
 
+  it('swaps two cards between a hand and the deck / a well, keeping every card once', () => {
+    const { service, handler, room } = setupDealtRoom();
+    try {
+      const before = allCardIds(room);
+      const inHand = room.playerHands.get('p1')[3];
+      const inDeck = room.deck.cards[5];
+      const res1 = handler.swapPlayerCards({ roomId: 'dev-room', a: { cardId: inHand.cardId }, b: { cardId: inDeck.cardId } });
+      expect(res1.success).to.equal(true);
+      expect(room.playerHands.get('p1')[3].cardId).to.equal(inDeck.cardId);
+      expect(room.deck.cards[5].cardId).to.equal(inHand.cardId);
+      expect(res1.a.from).to.equal('seat 0 hand');
+      expect(res1.b.from).to.equal('deck');
+
+      const inWell = room.deadPiles[1][2];
+      const res2 = handler.swapPlayerCards({ roomId: 'dev-room', a: { cardId: inWell.cardId }, b: { cardId: inDeck.cardId } });
+      expect(res2.success).to.equal(true);
+      expect(room.playerHands.get('p1')[3].cardId).to.equal(inWell.cardId);
+      expect(room.deadPiles[1][2].cardId).to.equal(inDeck.cardId);
+      expect(allCardIds(room)).to.deep.equal(before);
+    } finally {
+      cleanup(service, handler, room);
+    }
+  });
+
+  it('refuses to swap a card that sits in a meld or the discard pile', () => {
+    const { service, handler, room } = setupDealtRoom();
+    try {
+      const inDiscard = room.deck.cards.pop();
+      room.discardPile.push(inDiscard);
+      const inHand = room.playerHands.get('p1')[0];
+      const before = allCardIds(room);
+      const res = handler.swapPlayerCards({ roomId: 'dev-room', a: { cardId: inDiscard.cardId }, b: { cardId: inHand.cardId } });
+      expect(res.success).to.equal(false);
+      expect(res.error).to.include('discard pile');
+      expect(allCardIds(room)).to.deep.equal(before);
+      expect(handler.swapPlayerCards({ roomId: 'dev-room', a: { cardId: inHand.cardId }, b: { cardId: inHand.cardId } }).success).to.equal(false);
+    } finally {
+      cleanup(service, handler, room);
+    }
+  });
+
   it('dev detail exposes the free pools (deck, wells) and melds for availability checks', () => {
     const { service, handler, room } = setupDealtRoom();
     try {
