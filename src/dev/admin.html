@@ -436,7 +436,10 @@
         </div>
         <div class="row">
           <button class="warn" id="btn-restart-announce">Announce restart</button>
-          <button class="danger" id="btn-restart-real" title="graceful SIGTERM after 3s — needs pm2/systemd to bring it back">Restart process</button>
+          <button class="danger" id="btn-restart-real" title="development{restart_server} to every client (they LEAVE the table), then graceful SIGTERM after 3s — needs pm2/systemd to bring it back">Restart process</button>
+        </div>
+        <div class="row">
+          <button class="primary" id="btn-restart-keep" title="server_restarting to every client (they KEEP the table), final snapshot, graceful SIGTERM after 3s; rooms are held on the next boot until a player rejoins — needs pm2/systemd to bring it back">Restart (keep sessions)</button>
         </div>
       </div>
     </div>
@@ -2083,17 +2086,31 @@
   $('btn-restart-announce').onclick = function () {
     broadcast(Object.assign({ restart_server: true }, opsMessage()), 'Restart announce');
   };
-  $('btn-restart-real').onclick = function () {
-    if (!confirm('Broadcast a restart notice and shut the server process down?\n' +
-        'It comes back only if a supervisor (pm2/systemd/docker) is running it.')) return;
+  // Two ways down, one webhook. Without `keep_sessions` the server broadcasts
+  // `development { restart_server: true }` first — every client leaves the
+  // table — and then exits. With it, the server sends `server_restarting`,
+  // snapshots every room and exits; clients keep the table and rejoin on the
+  // next boot (docs/RESTART_RESILIENCE.md). Both come back only under a
+  // supervisor.
+  function restartProcess(keepSessions) {
+    var question = keepSessions
+      ? 'Restart the server process and KEEP every live table?\n' +
+        'Clients get server_restarting, rooms are snapshotted and held on the next boot.\n' +
+        'It comes back only if a supervisor (pm2/systemd/docker) is running it.'
+      : 'Broadcast a restart notice (every client LEAVES the table) and shut the server process down?\n' +
+        'It comes back only if a supervisor (pm2/systemd/docker) is running it.';
+    if (!confirm(question)) return;
     restarting = true;
-    postJson('/webhooks/dev-restart', Object.assign({ shutdown_after_ms: 3000 }, opsMessage())).then(function (result) {
+    var payload = Object.assign({ shutdown_after_ms: 3000 }, opsMessage());
+    if (keepSessions) payload.keep_sessions = true;
+    postJson('/webhooks/dev-restart', payload).then(function (result) {
       if (!result.success) {
         restarting = false;
         toast('Restart rejected: ' + result.error, true);
         return;
       }
-      log('dev-restart: notice sent, process exits in ' + result.shutdownInMs + 'ms');
+      log('dev-restart' + (keepSessions ? ' (keep sessions)' : '') +
+          ': notice sent, process exits in ' + result.shutdownInMs + 'ms');
       toast('Restarting — server goes down in ' + (result.shutdownInMs / 1000) + 's.');
       document.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
       setTimeout(function () { window.location.reload(); }, 12000);
@@ -2102,7 +2119,9 @@
       toast('Restart failed: ' + e.message, true);
       log('dev-restart: ' + e.message, true);
     });
-  };
+  }
+  $('btn-restart-real').onclick = function () { restartProcess(false); };
+  $('btn-restart-keep').onclick = function () { restartProcess(true); };
 
   // ---- connect ------------------------------------------------------------------------
 
