@@ -218,7 +218,9 @@ class BotCoordinator {
 
     const timer = setTimeout(() => {
       this.actionTimers.delete(botKey);
-      this._playBotState(room.roomId, player.playerId, stateKey, botKey).catch((error) => {
+      this._inRoomLogContext(room.roomId, () =>
+        this._playBotState(room.roomId, player.playerId, stateKey, botKey)
+      ).catch((error) => {
         this.logger.warn(`[BOT] Failed to play bot turn for ${player.playerId}: ${error.message}`);
       });
     }, delayMs);
@@ -383,6 +385,16 @@ class BotCoordinator {
     return animated
       ? this._randomDelay(this.animatedFollowUpDelayMinMs, this.animatedFollowUpDelayMaxMs)
       : this._randomDelay(this.followUpDelayMinMs, this.followUpDelayMaxMs);
+  }
+
+  /**
+   * Run a bot turn with the room as the ambient per-game log context (so its
+   * lines land in that game's log). Tolerates a stub logger without it.
+   * @private
+   */
+  _inRoomLogContext(roomId, fn) {
+    if (typeof this.logger?.runWithRoom === 'function') return this.logger.runWithRoom(roomId, fn);
+    return fn();
   }
 
   _botKey(roomId, playerId) {
@@ -569,7 +581,9 @@ class BotCoordinator {
         this.unregisterRoom(roomId);
         return;
       }
-      this.onRoomStateChanged(room, actAfter == null ? {} : { actionDelayMs: actAfter });
+      this._inRoomLogContext(key, () =>
+        this.onRoomStateChanged(room, actAfter == null ? {} : { actionDelayMs: actAfter })
+      );
     }, wait);
     timer.unref?.();
     this.scheduledRoomChecks.set(key, { timer, effectiveAt });

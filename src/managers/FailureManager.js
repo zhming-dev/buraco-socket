@@ -41,6 +41,13 @@ class FailureManager extends EventEmitter {
     this.botCoordinator = null;
     this.ensureRoomOwnerForMutation = null;
 
+    // Set by persistAllGames() once the final restart snapshot of every room
+    // has been captured: from then on persistGameState is a no-op, so a
+    // straggling per-action / grace write (e.g. from a disconnect that landed
+    // a few ms before SIGTERM) can never overwrite the final snapshot after
+    // GameService.shutdown() has wiped the intermission fields.
+    this._snapshotFrozen = false;
+
     // Turn-timer control hook (wired from SocketHandlers). Lets the failure
     // manager PAUSE the active turn timer while a disconnected human is within
     // their reconnect grace window, and RESUME it (with the time that was left)
@@ -131,6 +138,7 @@ class FailureManager extends EventEmitter {
    * Called after every game action
    */
   async persistGameState(room) {
+    if (this._snapshotFrozen) return;
     try {
       const stateKey = `game:${room.roomId}:state`;
       
@@ -235,6 +243,13 @@ class FailureManager extends EventEmitter {
         discardLocks: Array.from(room.discardLocks || []),
         turnTimeLimit: room.turnTimeLimit,
         turnTimeRemaining: room.getTurnTimeRemaining ? room.getTurnTimeRemaining() : room.turnTimeRemaining,
+        // Exact ms left on the live turn timer (null when none is armed). The
+        // seconds field above is a rounded client-facing snapshot; this one is
+        // what the deploy-restart resume re-arms the interrupted turn from, so
+        // a player gets back the time they actually had, not a fresh full turn
+        // and not a stale value from the last action.
+        turnTimerRemainingMs:
+          room.turnTimerDeadline != null ? Math.max(0, room.turnTimerDeadline - Date.now()) : null,
         
         players: room.getPlayers().map(p => ({
           apiSeatReservationVersion: p.apiSeatReservationVersion ?? null,
@@ -269,6 +284,48 @@ class FailureManager extends EventEmitter {
     }
   }
   
+  /**
+   * Final durable snapshot of EVERY live room, for a graceful restart. Every
+   * snapshot object is built synchronously in one tick (persistGameState only
+   * yields at its Redis write), so no timer or bot can mutate a room between
+   * "captured" and "written". Bounded by `timeoutMs` so a slow Redis can never
+   * hold the process open; whatever did not land keeps the per-action snapshot
+   * that was already there.
+   * @param {{timeoutMs?: number}} [options]
+   * @returns {Promise<{total: number, persisted: number, timedOut: boolean}>}
+   */
+  async persistAllGames({ timeoutMs = 5000 } = {}) {
+    const rooms = Array.from(this.gameManager?.rooms?.values?.() || []);
+    if (rooms.length === 0) return { total: 0, persisted: 0, timedOut: false };
+    const writes = rooms.map((room) =>
+      this.persistGameState(room).then(
+        () => true,
+        () => false
+      )
+    );
+    // Every snapshot object above is already built (persistGameState runs
+    // synchronously up to its Redis write); nothing may write after this.
+    this._snapshotFrozen = true;
+    let timer;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), timeoutMs);
+      timer.unref?.();
+    });
+    const outcome = await Promise.race([Promise.all(writes), timeout]);
+    clearTimeout(timer);
+    if (outcome === 'timeout') {
+      this.logger.warn(
+        `[FailureManager] Final snapshot timed out after ${timeoutMs}ms (${rooms.length} rooms)`
+      );
+      return { total: rooms.length, persisted: 0, timedOut: true };
+    }
+    const persisted = outcome.filter(Boolean).length;
+    this.logger.warn(
+      `[FailureManager] Final snapshot written for ${persisted}/${rooms.length} room(s) before restart`
+    );
+    return { total: rooms.length, persisted, timedOut: false };
+  }
+
   /**
    * Send full game state to a specific player
    * Used after reconnection
@@ -920,18 +977,28 @@ class FailureManager extends EventEmitter {
    * Idempotent: a live reconnect (_handleReconnection) clears the timer and flips
    * status; an already-armed graceKey is skipped.
    */
-  rearmGraceTimers(room) {
+  rearmGraceTimers(room, { allHumanSeats = false } = {}) {
     if (!room || typeof room.getPlayers !== 'function') return 0;
     let armed = 0;
     for (const player of room.getPlayers()) {
       if (!player || player.isBot || player.status === 'bot') continue;
+      // `allHumanSeats` is the deploy-restart truth: a fresh process holds NO
+      // sockets, so a seat persisted as 'connected' is connected to nothing —
+      // its socketId is the id of a connection that died with the old process.
+      // Left as-is, the turn-timer expiry would auto-PLAY that "connected" seat
+      // (instead of the offline skip), OccupancyMonitor would count a ghost, and
+      // the next-round deal would pass its "some human is connected" gate on a
+      // lie. Every human seat is therefore treated as mid-grace until its owner
+      // rejoins — which the plain join_room path already handles.
       const midGrace =
+        allHumanSeats ||
         player.status === 'grace_period' ||
         player.status === 'disconnected' ||
         player.isConnected === false;
       if (!midGrace) continue;
       player.status = 'grace_period';
       player.isConnected = false;
+      player.socketId = null;
       const graceKey = `grace:${player.playerId}:${room.roomId}`;
       if (this.graceTimers.has(graceKey)) continue;
       this._scheduleGracePeriodExpiry(room, player, graceKey);
@@ -1094,6 +1161,10 @@ class FailureManager extends EventEmitter {
     room.discardLocks = new Map(state.discardLocks || []);
     room.turnTimeLimit = state.turnTimeLimit ?? room.turnTimeLimit;
     room.turnTimeRemaining = state.turnTimeRemaining ?? room.turnTimeRemaining;
+    room.restoredTurnRemainingMs =
+      state.turnTimerRemainingMs != null && Number.isFinite(Number(state.turnTimerRemainingMs))
+        ? Number(state.turnTimerRemainingMs)
+        : null;
     room.lastRoundScores = state.lastRoundScores || {};
     room.lastTeamScores = state.lastTeamScores || {};
     room.lastBatidaType = state.lastBatidaType || null;

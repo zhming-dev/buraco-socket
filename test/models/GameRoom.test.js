@@ -223,7 +223,7 @@ describe('GameRoom Model', () => {
       expect(room.status).to.equal(GameRoomStatus.WAITING);
     });
 
-    it('should force start with at least 2 players', () => {
+    it('should preserve the 2v2 mode and refuse a forced start with only 2 players', () => {
       const room = new GameRoom({ roomId: 'test-room', maxPlayers: 4 });
 
       room.addPlayer(new PlayerSession({
@@ -242,10 +242,38 @@ describe('GameRoom Model', () => {
 
       const result = room.startGame(true);
 
-      expect(result).to.be.true;
-      expect(room.maxPlayers).to.equal(2); // Adjusted to current count
-      expect(room.status).to.equal(GameRoomStatus.IN_PROGRESS);
+      expect(result).to.be.false;
+      expect(room.maxPlayers).to.equal(4);
+      expect(room.status).to.equal(GameRoomStatus.WAITING);
+      expect(room.gameStartedAt).to.be.null;
+      expect(room.cardsDealt).to.not.equal(true);
     });
+
+    for (const [label, indices] of [
+      ['duplicate', [0, 1, 1, 3]],
+      ['sparse', [0, 1, 3, 4]],
+    ]) {
+      it(`should reject ${label} seat indices even when the player count is full`, () => {
+        const room = new GameRoom({ roomId: `invalid-${label}`, maxPlayers: 4 });
+        for (let index = 0; index < 4; index += 1) {
+          room.addPlayer(new PlayerSession({
+            playerId: `p${index}`, playerName: `Player ${index}`, playerIndex: index, socketId: `s${index}`,
+          }));
+        }
+        // addPlayer already guards new admissions; this pins the independent
+        // start boundary against malformed/restored mutable session indices.
+        room.getPlayers().forEach((player, index) => { player.playerIndex = indices[index]; });
+
+        expect(room.players.size).to.equal(4);
+        expect(room.canStart()).to.equal(false);
+        expect(room.startGame()).to.equal(false);
+        expect(room.startGame(true)).to.equal(false);
+        expect(room.maxPlayers).to.equal(4);
+        expect(room.status).to.equal(GameRoomStatus.WAITING);
+        expect(room.gameStartedAt).to.equal(null);
+        expect(room.cardsDealt).to.not.equal(true);
+      });
+    }
   });
 
   describe('Card Dealing', () => {

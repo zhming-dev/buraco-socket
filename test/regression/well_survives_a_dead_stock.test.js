@@ -1,23 +1,5 @@
-/**
- * "Kalo deck pile 0, trus lu bisa meld semua pairs yang di tangan lu, itu
- * pozetto bisa diambil ketimbang jadi deck, jadi ini strategi buat nyuri
- * pozetto tanpa merubahnya jadi deck pile" — product decision 2026-08-27.
- *
- * The promotion used to fire in `_deckOutTerminal`, which runs on the DRAW TAP.
- * So the player facing a dead stock consumed the well by simply reaching for a
- * card — the strategy the request describes had no window to happen in.
- *
- * It is deferred now. While the discard pile is still a legal continuation the
- * well stays on the table, where emptying your hand collects it through the
- * ordinary `_autoTakeDeadIfNeeded` path. No solver decides whether a hand "can
- * meld everything": the player decides by doing it, and all this rule has to do
- * is not destroy the well while a legal move exists without it.
- *
- * THE SAFETY ARGUMENT, which is what these tests are really for: the promotion
- * is only deferred when the pile IS takeable. Every branch where it is not —
- * an empty pile, a squeeze-blocked take — promotes exactly as before, so no
- * position can be reached in which the player has no legal move.
- */
+// An untaken pozzetto survives a pile take, but an explicit stock draw must
+// promote it immediately, using the same rule as timeout draws.
 /* eslint-env mocha */
 const { expect } = require('chai');
 const ActionHandlers = require('../../src/handlers/ActionHandlers');
@@ -49,27 +31,46 @@ function deadStockRoom({ pile = [c('hearts', '9', 90)], well = true } = {}) {
 const wellCards = (room) =>
   (room.deadPiles || []).reduce((n, p) => n + (Array.isArray(p) ? p.length : 0), 0);
 
-describe('a dead stock does not eat the well while the pile can still be played', () => {
-  it('THE REQUEST: tapping draw no longer consumes the well', () => {
+describe('an empty stock promotes a well only when a stock draw is requested', () => {
+  it('a draw request promotes the well even when the pile is takeable', () => {
     const room = deadStockRoom();
-    expect(wellCards(room)).to.equal(1);
+    const originalPile = [...room.discardPile];
 
-    const out = ActionHandlers._deckOutTerminal(room, 'p1');
+    expect(ActionHandlers._deckOutTerminal(room, 'p1')).to.equal(null);
 
-    expect(out, 'the round is not ended').to.equal(null);
-    expect(wellCards(room), 'the well is still on the table').to.equal(1);
-    expect(room.deck.count, 'and it was NOT shuffled into the stock').to.equal(0);
+    expect(wellCards(room)).to.equal(0);
+    expect(room.deadPiles).to.have.length(2);
+    expect(room.deck.count).to.equal(1);
+    expect(room.discardPile).to.deep.equal(originalPile);
+    const GameValidator = require('../../src/validators/GameValidator');
+    expect(GameValidator.validateDrawCard(room, 'p1', true).isValid).to.equal(true);
   });
 
-  it('the draw itself is refused, so the player takes the pile instead', () => {
+  it('taking the discard pile instead still preserves the well', () => {
     const room = deadStockRoom();
-    ActionHandlers._deckOutTerminal(room, 'p1');
 
-    const GameValidator = require('../../src/validators/GameValidator');
-    const draw = GameValidator.validateDrawCard(room, 'p1', true);
-    expect(draw.isValid).to.equal(false);
-    // A legal move still exists — that is the whole safety argument.
-    expect(GameValidator.validateDrawCard(room, 'p1', false).isValid).to.equal(true);
+    const result = ActionHandlers.handlePickUpPile(room, 'p1', room.discardPile);
+
+    expect(result.success).to.equal(true);
+    expect(wellCards(room)).to.equal(1);
+    expect(room.deck.count).to.equal(0);
+  });
+
+  it('a repeat draw after drawing cannot consume a second well', () => {
+    const room = deadStockRoom();
+    room.hasDrawnCard = true;
+
+    expect(ActionHandlers._deckOutTerminal(room, 'p1')).to.equal(null);
+    expect(wellCards(room)).to.equal(1);
+    expect(room.deck.count).to.equal(0);
+  });
+
+  it('an out-of-turn draw cannot consume the well', () => {
+    const room = deadStockRoom();
+
+    expect(ActionHandlers._deckOutTerminal(room, 'p2')).to.equal(null);
+    expect(wellCards(room)).to.equal(1);
+    expect(room.deck.count).to.equal(0);
   });
 
   it('emptying the hand still collects it, which is the point', () => {
@@ -83,7 +84,7 @@ describe('a dead stock does not eat the well while the pile can still be played'
     expect(wellCards(room)).to.equal(0);
   });
 
-  describe('and it still promotes wherever deferring could strand someone', () => {
+  describe('stock resolution preserves existing round-ending rules', () => {
     it('an EMPTY pile is no continuation, so the well refills the stock', () => {
       const room = deadStockRoom({ pile: [] });
 
@@ -104,7 +105,7 @@ describe('a dead stock does not eat the well while the pile can still be played'
 
     it('a dead stock with a takeable pile and no well still ends the round', () => {
       // The pile has never kept play alive on its own (existing product rule);
-      // deferring the promotion does not change that.
+      // manual promotion does not change that.
       const room = deadStockRoom({ well: false });
 
       const out = ActionHandlers._deckOutTerminal(room, 'p1');

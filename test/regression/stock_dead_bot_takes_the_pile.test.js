@@ -139,9 +139,7 @@ describe('#stuck-table (dead stock + untaken well: the bot takes the pile)', () 
     expect(intent.type).to.equal('pick_up_pile');
   });
 
-  it('the server really would have refused that draw', () => {
-    // Not an assumption: the deferral fires and validateDrawCard rejects, so a
-    // `draw_card` intent from that seat is a move the engine throws away.
+  it('a stock draw can now promote the well without waiting for a bot rescue', () => {
     const room = new GameRoom({ roomId: 'stuck-1', maxPlayers: 2 });
     room.status = GameRoomStatus.IN_PROGRESS;
     room.ruleset = 'professional';
@@ -163,17 +161,14 @@ describe('#stuck-table (dead stock + untaken well: the bot takes the pile)', () 
     room.playerDeadPileCount.set('p1', 1);
     room.meldDirtyFlags.set('p1', new Set());
 
-    // The deferral: nothing promoted, round not ended.
     expect(ActionHandlers._deckOutTerminal(room, 'p1')).to.equal(null);
-    expect(room.deck.count).to.equal(0);
-    expect(room.deadPiles[0]).to.have.length(11);
+    expect(room.deck.count).to.equal(11);
+    expect(room.deadPiles[0]).to.have.length(0);
 
-    // ...and the draw is then rejected outright.
     const validation = GameValidator.validateDrawCard(room, 'p1', true);
-    expect(validation.isValid).to.equal(false);
-    expect(validation.error).to.match(/Deck is empty/i);
+    expect(validation.isValid).to.equal(true);
 
-    // The pile take is the move that IS open.
+    // Choosing the pile instead remains legal too.
     expect(ActionHandlers._pileTakeBlockedBySqueeze(room, 'p1')).to.equal(false);
   });
 

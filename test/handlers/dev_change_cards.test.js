@@ -199,6 +199,120 @@ describe('dev_change_cards (dev hand surgery)', () => {
     }
   });
 
+  // Card conservation: a dev replace may only draw from the deck, the wells and
+  // the target's own hand. Every physical card stays in the game exactly once.
+  const allCardIds = (room) => {
+    const ids = [];
+    ids.push(...room.deck.cards.map((c) => c.cardId));
+    for (const pile of room.deadPiles) ids.push(...pile.map((c) => c.cardId));
+    ids.push(...room.discardPile.map((c) => c.cardId));
+    for (const p of room.getPlayers()) {
+      ids.push(...(room.playerHands.get(p.playerId) || []).map((c) => c.cardId));
+      for (const meld of room.playerMelds.get(p.playerId) || []) ids.push(...meld.map((c) => c.cardId));
+    }
+    return ids.sort((a, b) => a - b);
+  };
+
+  it('keeps every physical card in the game exactly once after a replace', () => {
+    const { service, handler, room } = setupDealtRoom();
+    try {
+      const before = allCardIds(room);
+      expect(new Set(before).size).to.equal(before.length); // no duplicates to begin with
+      const fromDeck = room.deck.cards[0];
+      const fromWell = room.deadPiles[0][0];
+      const own = room.playerHands.get('p1')[0];
+      const result = handler.changePlayerCards({
+        roomId: 'dev-room',
+        target_user: 'p1',
+        change_cards: [{ cardId: fromDeck.cardId }, { cardId: fromWell.cardId }, { cardId: own.cardId }],
+      });
+      expect(result.success).to.equal(true);
+      const after = allCardIds(room);
+      expect(after).to.deep.equal(before);
+      // and each source actually gave up its instance
+      expect(room.deck.cards.some((c) => c.cardId === fromDeck.cardId)).to.equal(false);
+      expect(room.deadPiles[0].some((c) => c.cardId === fromWell.cardId)).to.equal(false);
+      expect(room.playerHands.get('p1').map((c) => c.cardId)).to.deep.equal([
+        fromDeck.cardId,
+        fromWell.cardId,
+        own.cardId,
+      ]);
+    } finally {
+      cleanup(service, handler, room);
+    }
+  });
+
+  it('refuses a card that sits in another hand, a meld or the discard pile — and says where', () => {
+    const { service, handler, room } = setupDealtRoom();
+    try {
+      const inOpponentHand = room.playerHands.get('p2')[0];
+      const inDiscard = room.deck.cards.pop();
+      room.discardPile.push(inDiscard);
+      const inMeld = room.deck.cards.pop();
+      room.playerMelds.set('p2', [[inMeld]]);
+      const before = allCardIds(room);
+
+      const result = handler.changePlayerCards({
+        roomId: 'dev-room',
+        target_user: 'p1',
+        change_cards: [
+          { cardId: inOpponentHand.cardId },
+          { cardId: inDiscard.cardId },
+          { cardId: inMeld.cardId },
+        ],
+      });
+
+      expect(result.success).to.equal(false);
+      expect(result.missing.map((m) => m.where)).to.deep.equal([
+        ['seat 1 hand'],
+        ['discard pile'],
+        ['seat 1 meld'],
+      ]);
+      expect(result.error).to.include('seat 1 hand');
+      expect(result.error).to.include('discard pile');
+      expect(allCardIds(room)).to.deep.equal(before); // untouched
+    } finally {
+      cleanup(service, handler, room);
+    }
+  });
+
+  it('reports "no copy left" when more copies are asked than the two decks hold', () => {
+    const { service, handler, room } = setupDealtRoom();
+    try {
+      const result = handler.changePlayerCards({
+        roomId: 'dev-room',
+        target_user: 'p1',
+        change_cards: [
+          { suit: 'hearts', rank: 'A' },
+          { suit: 'hearts', rank: 'A' },
+          { suit: 'hearts', rank: 'A' },
+        ],
+      });
+      expect(result.success).to.equal(false);
+      const last = result.missing[result.missing.length - 1];
+      expect(last.rank).to.equal('A');
+      // The third A♥ does not exist anywhere free; `where` lists only the
+      // copies that are locked up (possibly none).
+      expect(last.where).to.be.an('array');
+      expect(result.error).to.match(/no copy left|seat \d hand|meld|discard/);
+    } finally {
+      cleanup(service, handler, room);
+    }
+  });
+
+  it('dev detail exposes the free pools (deck, wells) and melds for availability checks', () => {
+    const { service, handler, room } = setupDealtRoom();
+    try {
+      const detail = handler.getRoomDevDetail('dev-room');
+      expect(detail.deck).to.have.length(room.deck.count);
+      expect(detail.deck[0]).to.have.property('cardId');
+      expect(detail.deadPiles.map((p) => p.length)).to.deep.equal(detail.deadPileCounts);
+      expect(detail.players[0].melds).to.deep.equal([]);
+    } finally {
+      cleanup(service, handler, room);
+    }
+  });
+
   it('socket route rejects a bad secret and acks the failure', () => {
     const { service, handler, room, s1 } = setupDealtRoom();
     const originalSecret = config.security.webhookSecret;

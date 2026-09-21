@@ -154,6 +154,29 @@ class BraziliaServer {
           return;
         }
 
+        // Static art for the dev console's 1:1 table (court-card faces copied
+        // from the mobile SDK, downscaled). No secrets involved; the allowlist
+        // regex keeps this from ever serving anything outside src/dev/assets.
+        const devAsset = req.method === 'GET' && req.url.match(/^\/dev\/assets\/([a-z0-9_]+\/)?([a-z0-9_]+\.(png|jpg|svg))(?:\?|$)/);
+        if (devAsset) {
+          const rel = path.join(devAsset[1] || '', devAsset[2]);
+          const file = path.join(__dirname, 'dev', 'assets', rel);
+          fs.readFile(file, (err, buf) => {
+            if (err) {
+              sendJson(res, 404, { error: 'Not Found' });
+              return;
+            }
+            res.statusCode = 200;
+            res.setHeader(
+              'Content-Type',
+              devAsset[3] === 'png' ? 'image/png' : devAsset[3] === 'jpg' ? 'image/jpeg' : 'image/svg+xml'
+            );
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+            res.end(buf);
+          });
+          return;
+        }
+
         if (req.method === 'GET' && req.url.startsWith('/dev/api/status')) {
           if (!devAuthorized()) {
             res.statusCode = 401;
@@ -173,8 +196,65 @@ class BraziliaServer {
               shuttingDown: this.isShuttingDown,
               stats: listing.stats,
               development: listing.development,
+              gameLog: logger.gameLogStore.stats(),
             })
           );
+          return;
+        }
+
+        // Per-game logs (dev console → Game Logs). Logs outlive the room for
+        // GAME_LOG_RETENTION_MS (default 2h), so a finished game is still readable.
+        //   GET /dev/api/logs                          → rooms that have a log
+        //   GET /dev/api/rooms/<roomId>/logs           → JSON page
+        //       ?since=<seq>  live-tail cursor (entries after seq)
+        //       &level=error|warn|info|debug  minimum level
+        //       &q=<text>     substring filter   &limit=<n>   &tail=1 (last n)
+        //       &narrative=1  only [GAME]/[ROOM_LIFECYCLE] events + warn/error
+        //   GET /dev/api/rooms/<roomId>/logs.txt       → plain text (download)
+        // Must precede the /dev/api/rooms/<roomId> detail route below.
+        if (req.method === 'GET' && req.url.startsWith('/dev/api/logs')) {
+          if (!devAuthorized()) {
+            sendJson(res, 401, { error: 'Unauthorized' });
+            return;
+          }
+          sendJson(res, 200, this.socketHandlers.listRoomLogsForDev());
+          return;
+        }
+
+        const roomLogsMatch =
+          req.method === 'GET' && req.url.match(/^\/dev\/api\/rooms\/([^/?]+)\/logs(\.txt)?(?:\?|$)/);
+        if (roomLogsMatch) {
+          if (!devAuthorized()) {
+            sendJson(res, 401, { error: 'Unauthorized' });
+            return;
+          }
+          const roomId = decodeURIComponent(roomLogsMatch[1]);
+          const query = new URL(req.url, 'http://localhost').searchParams;
+          const opts = {
+            since: query.get('since'),
+            level: query.get('level'),
+            q: query.get('q'),
+            limit: query.get('limit'),
+            tail: ['1', 'true'].includes(query.get('tail')),
+            narrative: ['1', 'true'].includes(query.get('narrative')),
+          };
+          if (roomLogsMatch[2]) {
+            const text = logger.gameLogStore.renderText(roomId, { level: opts.level, q: opts.q });
+            if (text === null) {
+              sendJson(res, 404, { success: false, error: 'No logs for room' });
+              return;
+            }
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader(
+              'Content-Disposition',
+              `attachment; filename="game-${roomId.replace(/[^A-Za-z0-9._-]/g, '_')}.log"`
+            );
+            res.end(text);
+            return;
+          }
+          const result = this.socketHandlers.getRoomLogsForDev(roomId, opts);
+          sendJson(res, result.success ? 200 : 404, result);
           return;
         }
 
@@ -561,6 +641,12 @@ class BraziliaServer {
         // shutdown_after_ms (default 3s, clamp 0.5–60s) via SIGTERM so the
         // supervisor (pm2/systemd/docker) restarts it. Bare `node index.js`
         // just exits; restart it manually.
+        //
+        // { keep_sessions: true } is the DEPLOY variant: no restart_server
+        // broadcast (that flag makes clients leave the table), only the graceful
+        // SIGTERM — the shutdown drain snapshots every room and emits
+        // `server_restarting`, and the next boot resumes each game when its
+        // players rejoin. See docs/RESTART_RESILIENCE.md.
         if (req.method === 'POST' && req.url.startsWith('/webhooks/dev-restart')) {
           let body = '';
           req.on('data', (chunk) => {
@@ -586,18 +672,28 @@ class BraziliaServer {
 
               const data = JSON.parse(body || '{}');
               const announceOnly = data.announce_only === true || data.announceOnly === true;
+              const keepSessions = data.keep_sessions === true || data.keepSessions === true;
               const rawDelay = Number(data.shutdown_after_ms ?? data.shutdownAfterMs);
               const shutdownInMs = Math.min(Math.max(rawDelay || 3000, 500), 60000);
 
-              const result = this.socketHandlers.broadcastDevelopmentNotice({
-                restart_server: true,
-                message: typeof data.message === 'string' ? data.message : undefined,
-              });
-              if (!result.success) {
+              if (keepSessions && announceOnly) {
                 res.statusCode = 400;
                 res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify(result));
+                res.end(JSON.stringify({ success: false, error: 'keep_sessions has nothing to announce; drop announce_only' }));
                 return;
+              }
+
+              if (!keepSessions) {
+                const result = this.socketHandlers.broadcastDevelopmentNotice({
+                  restart_server: true,
+                  message: typeof data.message === 'string' ? data.message : undefined,
+                });
+                if (!result.success) {
+                  res.statusCode = 400;
+                  res.setHeader('Content-Type', 'application/json');
+                  res.end(JSON.stringify(result));
+                  return;
+                }
               }
 
               if (!announceOnly) {
@@ -614,6 +710,7 @@ class BraziliaServer {
                 event: 'dev_restart',
                 requestId,
                 announceOnly,
+                keepSessions,
                 shutdownInMs: announceOnly ? null : shutdownInMs,
               });
 
@@ -622,8 +719,9 @@ class BraziliaServer {
               res.end(
                 JSON.stringify({
                   success: true,
-                  announced: true,
+                  announced: !keepSessions,
                   announceOnly,
+                  keepSessions,
                   shutdownInMs: announceOnly ? null : shutdownInMs,
                 })
               );
@@ -907,6 +1005,17 @@ class BraziliaServer {
       );
       this.occupancyMonitor.start();
 
+      // Per-game log retention sweeper (+ file flusher when GAME_LOG_FILE=true).
+      if (this.config.gameLog.enabled) {
+        logger.gameLogStore.start();
+        const { retentionMs, fileEnabled, fileDirectory } = this.config.gameLog;
+        logger.info(
+          `✓ Per-game logs enabled (retention ${Math.round(retentionMs / 60000)}m, ` +
+            `level ${this.config.gameLog.level}` +
+            (fileEnabled ? `, files in ${fileDirectory})` : ', memory only)')
+        );
+      }
+
       // Setup middleware
       this._setupMiddleware();
 
@@ -991,10 +1100,41 @@ class BraziliaServer {
           logger.info('✓ Occupancy monitor stopped');
         }
 
+        // RESTART DRAIN (deploy resilience — see docs/RESTART_RESILIENCE.md).
+        // Order matters:
+        //   1. stop the bots, so no bot move lands between snapshot and exit;
+        //   2. flip the socket layer into drain mode and tell every client this
+        //      is a restart (keep the session, auto-reconnect, rejoin) — from here
+        //      a socket closing is NOT a player leaving;
+        //   3. one final, AWAITED snapshot of every live room, taken while the
+        //      turn timers / intermission deadlines are still intact (the
+        //      per-action snapshot is fire-and-forget and gameService.shutdown()
+        //      below wipes awaitingNextRound/nextRoundAt in disposeTimers()).
+        // Only then are the sockets closed and Redis quit. The next boot restores
+        // these rooms and holds them until a player rejoins (resumePersistedRooms).
         if (this.botCoordinator) {
           this.botCoordinator.shutdown();
           logger.info('✓ Bot coordinator cleaned up');
         }
+
+        if (this.socketHandlers?.beginRestartDrain) {
+          const notified = this.socketHandlers.beginRestartDrain();
+          logger.info(`✓ Restart drain started (${notified} socket(s) notified)`);
+        }
+
+        if (this.failureManager?.persistAllGames) {
+          const snap = await this.failureManager.persistAllGames({
+            timeoutMs: this.config.game.restartSnapshotTimeoutMs,
+          });
+          logger.info(
+            `✓ Final game snapshot: ${snap.persisted}/${snap.total} room(s)` +
+              (snap.timedOut ? ' (TIMED OUT — per-action snapshots remain)' : '')
+          );
+        }
+
+        // Flush pending per-game log lines to disk before the process goes.
+        await logger.gameLogStore.stop();
+        logger.info('✓ Per-game logs flushed');
 
         if (this.socketHandlers?._releaseOwnedRooms) {
           await this.socketHandlers._releaseOwnedRooms();

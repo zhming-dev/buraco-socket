@@ -68,6 +68,19 @@ const config = {
     // via sync-room (`nextRoundDelayMs`). See SocketHandlers.NEXT_ROUND_DELAY_MS
     // for why the effective value is clamped.
     nextRoundDelayMs: intWithDefault('NEXT_ROUND_DELAY_MS', 25000),
+    // Restart resilience (deploy without ending live games). After a restart
+    // every restored in-progress room is HELD — no turn timer, no bot move, no
+    // next-round deal — until one of its humans rejoins or this window elapses,
+    // so nobody is auto-played / struck for a deploy they did not cause. Covers
+    // the supervisor restart + the client's reconnect backoff with margin.
+    restartHoldMs: intWithDefault('RESTART_HOLD_MS', 60000),
+    // When the hold is released the interrupted turn resumes with the time it
+    // had left at shutdown, but never less than this, so a returning player is
+    // not handed a 1-second turn.
+    restartMinTurnMs: intWithDefault('RESTART_MIN_TURN_MS', 10000),
+    // Upper bound on the final all-rooms snapshot at shutdown. Past it the
+    // process exits anyway (each room still has its last per-action snapshot).
+    restartSnapshotTimeoutMs: intWithDefault('RESTART_SNAPSHOT_TIMEOUT_MS', 5000),
   },
 
   // Logging configuration
@@ -76,6 +89,29 @@ const config = {
     enableConsole: process.env.LOG_CONSOLE !== 'false',
     enableFile: process.env.LOG_FILE === 'true',
     logDirectory: process.env.LOG_DIR || './logs',
+  },
+
+  // Per-game log capture (dev console → Game Logs). Every log line the server
+  // can attribute to a room is ALSO kept in a per-room ring buffer so one
+  // game's full timeline can be pulled after the fact
+  // (GET /dev/api/rooms/<roomId>/logs). Entries outlive the room: a finished
+  // game stays readable for `retentionMs` after its last line (default 2h).
+  // See src/observability/GameLogStore.js.
+  gameLog: {
+    enabled: process.env.GAME_LOG_ENABLED !== 'false',
+    // Capture level for the per-room buffer, independent of LOG_LEVEL: the
+    // console can stay at `info` while a game's own log keeps `debug` lines.
+    level: process.env.GAME_LOG_LEVEL || 'debug',
+    retentionMs: intWithDefault('GAME_LOG_RETENTION_MS', 2 * 60 * 60 * 1000),
+    maxEntriesPerRoom: intWithDefault('GAME_LOG_MAX_ENTRIES_PER_ROOM', 4000),
+    maxTotalEntries: intWithDefault('GAME_LOG_MAX_TOTAL_ENTRIES', 400000),
+    // JSONL file sink so a game's log survives a restart. Follows LOG_FILE
+    // unless GAME_LOG_FILE is set explicitly.
+    fileEnabled:
+      process.env.GAME_LOG_FILE === undefined
+        ? process.env.LOG_FILE === 'true'
+        : process.env.GAME_LOG_FILE === 'true',
+    fileDirectory: process.env.GAME_LOG_DIR || `${process.env.LOG_DIR || './logs'}/games`,
   },
 
   // Server-side bot worker. The worker runs in a child process so a bot strategy

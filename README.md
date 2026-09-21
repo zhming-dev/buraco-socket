@@ -321,6 +321,9 @@ Outgoing (server -> client):
 - `player_joined`, `player_left`, `player_disconnected`, `player_reconnected`, `host_changed`, `room_closed`
 - `game_started`, `game_state_update`, `turn_completed`, `round_ended`, `game_ended`
 - `card_drawn`, `meld_played`, `card_discarded`, `went_down`, `added_to_meld`, `pile_picked_up`, `pozzetto_taken`
+- `server_restarting` — a deploy restart is about to close the socket; keep the session,
+  let socket.io reconnect, then re-emit `join_room` (see `docs/RESTART_RESILIENCE.md`).
+  Distinct from `development { restart_server: true }`, which means "leave the table".
 
 See `src/constants/events.js` and `src/constants/matchmaking.js` for canonical names.
 
@@ -330,9 +333,15 @@ See `src/constants/events.js` and `src/constants/matchmaking.js` for canonical n
 
 - Room IDs are normalized to strings in runtime maps.
 - Realtime server refuses implicit room creation when `join_room` provides unknown `roomId`; call `sync-room` first.
-- In-memory Redis adapter (`src/utils/InMemoryRedis.js`) is used for failure-management state.
+- In-memory Redis adapter (`src/utils/InMemoryRedis.js`) is used for failure-management state
+  when no Redis is configured; with a real Redis, live games survive a process restart
+  (`SIGTERM` / `pm2 restart` / `POST /webhooks/dev-restart { keep_sessions: true }`) and resume
+  when players rejoin. See `docs/RESTART_RESILIENCE.md`.
 - In production, validate and rotate webhook secrets regularly.
 - Never commit real tokens/passwords in `bot/.env`.
+- Per-game logs: every log line the server can attribute to a room is kept per room for at least 2h
+  (finished games included) and readable from the dev console (`GET /dev` → Logs tab) or
+  `GET /dev/api/rooms/<roomId>/logs`. See `docs/GAME_LOGS.md`.
 
 ---
 

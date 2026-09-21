@@ -151,6 +151,11 @@ class SocketHandlers {
     this.ownedRoomIds = new Set();
     this.ownerRenewTimers = new Map();
     this._ownerActionListenerRegistered = false;
+    // Graceful-restart drain (deploy). While true, socket closures are the
+    // process shutting down on purpose — not players leaving — and
+    // handleDisconnect must not enter grace / broadcast / notify the backend.
+    // See beginRestartDrain().
+    this.restartDraining = false;
     // socketId -> last chat send timestamp (ms). Light per-socket throttle so the
     // in-game chat can't be spammed; uses its own clock (not the game action
     // rate limiter) so a chatty player never trips the "too many actions" guard.
@@ -308,10 +313,12 @@ class SocketHandlers {
         let result;
         try {
           const forwardedSocket = this._createForwardedSocket(payload.socketId);
-          result = this._invokeForwardedOwnerAction(
-            payload.handlerName,
-            forwardedSocket,
-            payload.data || {}
+          result = logger.runWithRoom(roomId, () =>
+            this._invokeForwardedOwnerAction(
+              payload.handlerName,
+              forwardedSocket,
+              payload.data || {}
+            )
           );
         } finally {
           if (previousPlayerId) {
@@ -443,47 +450,12 @@ class SocketHandlers {
     let resumed = 0;
     for (const roomId of Array.from(rooms.keys())) {
       try {
-        const room = this.gameService.getRoom(roomId);
-        // #11 multi-round: also resume rooms parked in the round-over
-        // intermission. They are FINISHED, so the isInProgress() gate alone
-        // skipped them and a restart during the round-over card silently lost the
-        // match (no timer re-armed, and the room then sat until GameService's
-        // 1-hour FINISHED sweep).
-        if (!room) continue;
-        if (!room.isInProgress?.() && !room.awaitingNextRound) continue;
-
-        if (this._ownershipEnabled()) {
-          // Acquiring the lease already runs _recoverOwnedRoomRuntime for owned
-          // rooms; skip rooms another live node owns.
-          const ownership = await this._ensureRoomOwner(roomId, { acquire: true });
-          if (!ownership?.owned) continue;
-        }
-
-        if (room.awaitingNextRound) {
-          // Nothing below applies to an intermission (no turn in flight, no
-          // mid-turn grace): just re-arm the deal and move on.
-          this._scheduleNextRound(room, this._remainingNextRoundMs(room));
-          resumed += 1;
-          continue;
-        }
-
-        // Bot registry is in-memory → re-register every bot seat so the
-        // coordinator knows which seats it must drive after the restart.
-        for (const player of room.getPlayers?.() || []) {
-          if (player && (player.isBot || player.status === 'bot')) {
-            this.botCoordinator?.registerBot(roomId, player.playerId);
-          }
-        }
-
-        // Re-arm grace→bot for seats that were mid-grace at persist time so a
-        // player who never reconnects post-restart is still replaced.
-        this.failureManager?.rearmGraceTimers?.(room);
-
-        // Re-arm the turn timer / bot driver (no-op if cluster path already did).
-        if (!this._ownershipEnabled()) {
-          await this._recoverOwnedRoomRuntime(roomId);
-        }
-        resumed++;
+        // Scoped per room so every line (and every timer re-armed here) lands
+        // in that game's log.
+        const didResume = await logger.runWithRoom(roomId, () =>
+          this._resumePersistedRoom(roomId)
+        );
+        if (didResume) resumed += 1;
       } catch (err) {
         logger.warn(`[RESUME] Failed to resume room ${roomId}: ${err.message}`);
       }
@@ -492,6 +464,202 @@ class SocketHandlers {
       logger.warn(`[RESUME] Resumed ${resumed} persisted in-progress room(s) after restart`);
     }
     return resumed;
+  }
+
+  /**
+   * Resume ONE persisted room after a restart (see resumePersistedRooms).
+   * @param {string} roomId
+   * @returns {Promise<boolean>} true when the room's runtime was re-armed
+   */
+  async _resumePersistedRoom(roomId) {
+    const room = this.gameService.getRoom(roomId);
+    // #11 multi-round: also resume rooms parked in the round-over
+    // intermission. They are FINISHED, so the isInProgress() gate alone
+    // skipped them and a restart during the round-over card silently lost the
+    // match (no timer re-armed, and the room then sat until GameService's
+    // 1-hour FINISHED sweep).
+    if (!room) return false;
+    if (!room.isInProgress?.() && !room.awaitingNextRound) {
+      // A restored LOBBY (single-node): its seats point at sockets that died
+      // with the old process. Treat each human like a pre-game drop — seat
+      // held, then the normal waiting-leave (host-gone kills the lobby) — but
+      // over the restart window, not the 30s network grace, so a lobby is not
+      // torn down while its players are still reconnecting.
+      if (room.status === GameRoomStatus.WAITING && !this._ownershipEnabled()) {
+        const holdMs = Math.max(SocketHandlers.WAITING_GRACE_MS, Number(config.game.restartHoldMs) || 60000);
+        let held = 0;
+        for (const player of room.getPlayers?.() || []) {
+          if (!player || player.isBot === true) continue;
+          player.socketId = null;
+          if (typeof player.disconnect === 'function') player.disconnect();
+          this._scheduleWaitingLeave(room.roomId, player.playerId, holdMs);
+          held += 1;
+        }
+        if (held > 0) {
+          logger.warn(`[RESUME] Lobby ${room.roomId}: ${held} seat(s) held ${holdMs}ms for reconnect after restart`);
+        }
+      }
+      return false;
+    }
+
+    if (this._ownershipEnabled()) {
+      // Acquiring the lease already runs _recoverOwnedRoomRuntime for owned
+      // rooms; skip rooms another live node owns.
+      const ownership = await this._ensureRoomOwner(roomId, { acquire: true });
+      if (!ownership?.owned) return false;
+    }
+
+    // SINGLE-NODE (the documented production topology): the restart severed
+    // every socket, so no human of this room is connected to this process yet.
+    // Mark every human seat as awaiting reconnect and HOLD the room — no turn
+    // timer, no bot move, no next-round deal — until one of them rejoins or the
+    // hold expires. Kicking the runtime at boot instead meant: the current turn
+    // ran out against an empty chair (auto-play / offline strike for a deploy
+    // the player never caused), bots played into a table nobody was watching,
+    // and an intermission re-deal fired into "no humans connected" and settled
+    // the match. Under cluster ownership the humans may be live on another node
+    // and the runtime resumed on the lease above; that path is unchanged.
+    if (!this._ownershipEnabled()) {
+      this.failureManager?.rearmGraceTimers?.(room, { allHumanSeats: true });
+      this._holdRoomForRestart(room);
+      return true;
+    }
+
+    if (room.awaitingNextRound) {
+      // Nothing below applies to an intermission (no turn in flight, no
+      // mid-turn grace): just re-arm the deal and move on.
+      this._scheduleNextRound(room, this._remainingNextRoundMs(room));
+      return true;
+    }
+
+    // Bot registry is in-memory → re-register every bot seat so the
+    // coordinator knows which seats it must drive after the restart.
+    this._reregisterRoomBots(room);
+
+    // Re-arm grace→bot for seats that were mid-grace at persist time so a
+    // player who never reconnects post-restart is still replaced.
+    this.failureManager?.rearmGraceTimers?.(room);
+    return true;
+  }
+
+  /** Bot registry is in-memory: re-register every bot seat of a restored room. */
+  _reregisterRoomBots(room) {
+    for (const player of room?.getPlayers?.() || []) {
+      if (player && (player.isBot || player.status === 'bot')) {
+        this.botCoordinator?.registerBot(room.roomId, player.playerId);
+      }
+    }
+  }
+
+  /**
+   * Deploy-restart hold. Park a restored room with NO runtime until a human
+   * rejoins (_releaseRestartHold from the join_room reconnect path) or
+   * config.game.restartHoldMs elapses. Idempotent per room.
+   * @param {import('../models/GameRoom')} room
+   */
+  _holdRoomForRestart(room) {
+    if (!room || room.restartHold) return;
+    const holdMs = Math.max(1000, Number(config.game.restartHoldMs) || 60000);
+    room.restartHold = {
+      since: Date.now(),
+      untilMs: Date.now() + holdMs,
+      remainingTurnMs: room.restoredTurnRemainingMs,
+    };
+    room.restartHoldHandle = setTimeout(
+      logger.bindRoom(room.roomId, () => {
+        room.restartHoldHandle = null;
+        this._releaseRestartHold(room, 'hold_expired');
+      }),
+      holdMs
+    );
+    room.restartHoldHandle.unref?.();
+    metrics.increment('buraco_restart_hold_total');
+    this._logRoomLifecycle('restart_hold_started', {
+      roomId: room.roomId,
+      holdMs,
+      awaitingNextRound: room.awaitingNextRound === true,
+      currentTurn: room.currentTurn,
+      remainingTurnMs: room.restoredTurnRemainingMs,
+    });
+    logger.warn(
+      `[RESUME] Room ${room.roomId} held for up to ${holdMs}ms after restart — runtime resumes when a player rejoins`
+    );
+  }
+
+  /**
+   * Release a deploy-restart hold and start the room's runtime exactly where
+   * the previous process left it: the interrupted turn gets the time it had
+   * left at shutdown (floored at config.game.restartMinTurnMs), an intermission
+   * gets its remaining countdown, bots are re-registered. No-op when the room is
+   * not held. Safe to call from the join path for every rejoin.
+   * @param {import('../models/GameRoom')} room
+   * @param {string} reason
+   * @returns {boolean} true when a hold was actually released
+   */
+  _releaseRestartHold(room, reason = 'released') {
+    if (!room || !room.restartHold) return false;
+    const hold = room.restartHold;
+    room.restartHold = null;
+    if (room.restartHoldHandle) {
+      clearTimeout(room.restartHoldHandle);
+      room.restartHoldHandle = null;
+    }
+    const heldMs = Date.now() - hold.since;
+    this._logRoomLifecycle('restart_hold_released', {
+      roomId: room.roomId,
+      reason,
+      heldMs,
+      status: room.status,
+      awaitingNextRound: room.awaitingNextRound === true,
+    });
+    logger.warn(`[RESUME] Room ${room.roomId} hold released (${reason}) after ${heldMs}ms`);
+
+    if (room.awaitingNextRound) {
+      this._scheduleNextRound(room, this._remainingNextRoundMs(room));
+      return true;
+    }
+    if (!room.isInProgress?.()) return true;
+
+    this._reregisterRoomBots(room);
+    if (room.cardsDealt && !room.awaitingDealAnimation && !room.turnTimerTickHandle) {
+      const minTurnMs = Math.max(1000, Number(config.game.restartMinTurnMs) || 10000);
+      const remaining =
+        Number.isFinite(hold.remainingTurnMs) && hold.remainingTurnMs > 0
+          ? Math.max(hold.remainingTurnMs, minTurnMs)
+          : undefined;
+      this._startTurnTimer(room, remaining);
+    } else {
+      this.botCoordinator?.onRoomStateChanged(room);
+    }
+    return true;
+  }
+
+  /**
+   * Graceful-restart drain, called by index.js at the top of shutdown BEFORE
+   * any socket is closed. Flips handleDisconnect into drain mode (socket
+   * closures are not player leaves) and tells every client the disconnect
+   * that follows is a deploy: keep the session, auto-reconnect, rejoin.
+   * @param {{message?: string}} [options]
+   * @returns {number} sockets notified
+   */
+  beginRestartDrain({ message } = {}) {
+    if (this.restartDraining) return 0;
+    this.restartDraining = true;
+    const payload = {
+      resume: true,
+      holdMs: Number(config.game.restartHoldMs) || 60000,
+      timestamp: new Date().toISOString(),
+    };
+    if (typeof message === 'string' && message.trim()) payload.message = message.trim().slice(0, 300);
+    let notified = 0;
+    try {
+      notified = this.io?.sockets?.sockets?.size || 0;
+      this.io?.emit?.(SocketEvents.SERVER_RESTARTING, payload);
+    } catch (error) {
+      logger.warn(`[SHUTDOWN] server_restarting broadcast failed: ${error.message}`);
+    }
+    logger.warn(`[SHUTDOWN] Restart drain started — ${notified} socket(s) notified, disconnects are not player leaves`);
+    return notified;
   }
 
   /**
@@ -696,6 +864,31 @@ class SocketHandlers {
       event,
       ...payload,
     });
+  }
+
+  /**
+   * One structured line per GAME-LEVEL fact (deal, draw, discard, meld, take,
+   * timeout, round end, seat comes/goes). This is the human-readable spine of a
+   * room's per-game log: the dev console renders `[GAME]` lines as sentences
+   * with card chips, and `?q=[GAME]` on the logs API gives the bare narrative
+   * without the protocol chatter. Cards travel as `{suit, rank, cardId}`.
+   * @param {GameRoom} room
+   * @param {string} type
+   * @param {object} [payload]
+   */
+  _gameEvent(room, type, payload = {}) {
+    if (!room) return;
+    logger.info(`[GAME] ${type}`, { roomId: room.roomId, game: type, ...payload });
+  }
+
+  /** Compact card for _gameEvent payloads. */
+  _briefCard(card) {
+    if (!card) return null;
+    return { suit: card.suit, rank: card.rank, cardId: card.cardId ?? card.instanceId ?? null };
+  }
+
+  _briefCards(cards) {
+    return Array.isArray(cards) ? cards.map((c) => this._briefCard(c)).filter(Boolean) : [];
   }
 
   _extractTurnTimeLimitSeconds(data = {}) {
@@ -1314,7 +1507,11 @@ class SocketHandlers {
     // on purpose — i.e. our own resume-probe bounce or a leaveRoom, not a
     // network fault at all. Without it there is no way to tell a flaky network
     // from a client that is disconnecting itself.
-    socket.on(SocketEvents.DISCONNECT, (reason) => this.handleDisconnect(socket, reason));
+    socket.on(SocketEvents.DISCONNECT, (reason) =>
+      logger.runWithRoom(this._roomIdForSocketEvent(socket, null), () =>
+        this.handleDisconnect(socket, reason)
+      )
+    );
   }
 
   /**
@@ -1441,7 +1638,7 @@ class SocketHandlers {
   }
 
   _actionGuard(socket, handler) {
-    return ErrorHandler.wrap(socket, (...args) => {
+    return this._wrapSocketEvent(socket, (...args) => {
       if (!rateLimiter.checkActionLimit(socket.id)) {
         socket.emit(SocketEvents.ERROR, {
           success: false,
@@ -1452,6 +1649,44 @@ class SocketHandlers {
       }
       return handler(...args);
     });
+  }
+
+  /**
+   * ErrorHandler.wrap plus the per-game log context: the handler (and every
+   * await / timer it spawns) runs with the socket's room as the ambient room,
+   * so its log lines land in that game's log. See logger.runWithRoom.
+   * @param {Socket} socket
+   * @param {Function} handler
+   * @returns {Function}
+   */
+  _wrapSocketEvent(socket, handler) {
+    return ErrorHandler.wrap(socket, (...args) =>
+      logger.runWithRoom(this._roomIdForSocketEvent(socket, args[0]), () => handler(...args))
+    );
+  }
+
+  /**
+   * Best-effort room attribution for an incoming socket event: the payload's
+   * roomId (join/claim before the socket is seated), else the seated player's
+   * room, else the spectator binding. Never throws — this only tags logs.
+   * @param {Socket} socket
+   * @param {*} data  the event payload (may be a callback or undefined)
+   * @returns {string|null}
+   */
+  _roomIdForSocketEvent(socket, data) {
+    try {
+      if (data && typeof data === 'object') {
+        const claimed = data.roomId ?? data.room_id;
+        if (claimed !== null && claimed !== undefined && claimed !== '') return String(claimed);
+      }
+      const playerId = this.gameService.getPlayerIdBySocket(socket.id);
+      const room = playerId ? this.gameService.getPlayerRoom(playerId) : null;
+      if (room) return String(room.roomId);
+      const spectating = this.spectatorSocketToRoom?.get(socket.id);
+      return spectating ? String(spectating) : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -1494,34 +1729,34 @@ class SocketHandlers {
     // Game events
     socket.on(
       SocketEvents.JOIN_ROOM,
-      ErrorHandler.wrap(socket, (data) =>
+      this._wrapSocketEvent(socket, (data) =>
         this._trackPendingJoin(socket.id, this.handleJoinRoom(socket, data))
       )
     );
 
     socket.on(
       SocketEvents.START_GAME,
-      ErrorHandler.wrap(socket, (data) => this.handleStartGame(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleStartGame(socket, data))
     );
 
     socket.on(
       SocketEvents.START_NEXT_ROUND,
-      ErrorHandler.wrap(socket, () => this.handleStartNextRound(socket))
+      this._wrapSocketEvent(socket, () => this.handleStartNextRound(socket))
     );
 
     socket.on(
       SocketEvents.DEAL_CARDS,
-      ErrorHandler.wrap(socket, (data) => this.handleDealCards(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleDealCards(socket, data))
     );
 
     socket.on(
       SocketEvents.DEAL_ANIMATION_COMPLETE,
-      ErrorHandler.wrap(socket, (data) => this.handleDealAnimationComplete(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleDealAnimationComplete(socket, data))
     );
 
     socket.on(
       SocketEvents.LEAVE_ROOM,
-      ErrorHandler.wrap(socket, () => this.handleLeaveRoom(socket))
+      this._wrapSocketEvent(socket, () => this.handleLeaveRoom(socket))
     );
 
     // Host heartbeat pong (lobby/WAITING rooms). The host replies to the
@@ -1529,7 +1764,7 @@ class SocketHandlers {
     // the room is not killed. Anti-spoof: only the room's current host counts.
     socket.on(
       SocketEvents.HOST_HEARTBEAT_PONG,
-      ErrorHandler.wrap(socket, (data) => this.handleHostHeartbeatPong(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleHostHeartbeatPong(socket, data))
     );
 
     // Client telemetry: stuck-UI animation-flag watchdog fired on a client. Pure
@@ -1545,17 +1780,17 @@ class SocketHandlers {
     // operator tool, and the secret check already rejects clients outright.
     socket.on(
       SocketEvents.DEV_CHANGE_CARDS,
-      ErrorHandler.wrap(socket, (data) => this.handleDevChangeCards(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleDevChangeCards(socket, data))
     );
 
     socket.on(
       SocketEvents.INVITE_BOT,
-      ErrorHandler.wrap(socket, (data) => this.handleInviteBot(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleInviteBot(socket, data))
     );
 
     socket.on(
       SocketEvents.REMOVE_BOT,
-      ErrorHandler.wrap(socket, (data) => this.handleRemoveBot(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleRemoveBot(socket, data))
     );
 
     // Items 7/B: voluntary "replace my seat with a bot" / "take back" are REMOVED
@@ -1566,58 +1801,58 @@ class SocketHandlers {
 
     socket.on(
       'switch_team',
-      ErrorHandler.wrap(socket, (data) => this.handleSwitchTeam(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleSwitchTeam(socket, data))
     );
 
     // Lobby seat swap (2v2): move into an empty seat, or ask another player to
     // swap (target accepts/declines). Host seat is fixed — never swapped.
     socket.on(
       'claim_seat',
-      ErrorHandler.wrap(socket, (data) => this.handleClaimSeat(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleClaimSeat(socket, data))
     );
     socket.on(
       'request_swap',
-      ErrorHandler.wrap(socket, (data) => this.handleRequestSwap(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleRequestSwap(socket, data))
     );
     socket.on(
       'respond_swap',
-      ErrorHandler.wrap(socket, (data) => this.handleRespondSwap(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleRespondSwap(socket, data))
     );
     socket.on(
       'cancel_swap',
-      ErrorHandler.wrap(socket, (data) => this.handleCancelSwap(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleCancelSwap(socket, data))
     );
 
     // Lobby seat invite: a seated player/host invites a SPECTATOR into an empty
     // seat (spectator accepts/declines, then claims via claim_seat).
     socket.on(
       'invite_to_seat',
-      ErrorHandler.wrap(socket, (data) => this.handleInviteToSeat(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleInviteToSeat(socket, data))
     );
     socket.on(
       'respond_seat_invite',
-      ErrorHandler.wrap(socket, (data) => this.handleRespondSeatInvite(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleRespondSeatInvite(socket, data))
     );
     socket.on(
       'cancel_seat_invite',
-      ErrorHandler.wrap(socket, (data) => this.handleCancelSeatInvite(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleCancelSeatInvite(socket, data))
     );
     // Host force-swap (no approval): host swaps/moves two lobby seats outright.
     socket.on(
       'host_swap_seats',
-      ErrorHandler.wrap(socket, (data) => this.handleHostSwapSeats(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleHostSwapSeats(socket, data))
     );
     // Lobby leave-seat: a seated NON-host player stands up and becomes a
     // spectator of the same room (WAITING-phase only).
     socket.on(
       'leave_seat',
-      ErrorHandler.wrap(socket, () => this.handleLeaveSeat(socket))
+      this._wrapSocketEvent(socket, () => this.handleLeaveSeat(socket))
     );
     // Host kick: host forces another participant out of their seat (→ spectator)
     // or out of the room entirely (WAITING-phase only).
     socket.on(
       'host_kick',
-      ErrorHandler.wrap(socket, (data) => this.handleHostKick(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleHostKick(socket, data))
     );
 
     socket.on(
@@ -1650,17 +1885,17 @@ class SocketHandlers {
     if (this.matchmakingQueue) {
       socket.on(
         MatchmakingEvents.JOIN_QUEUE,
-        ErrorHandler.wrap(socket, (data) => this.handleJoinMatchmaking(socket, data))
+        this._wrapSocketEvent(socket, (data) => this.handleJoinMatchmaking(socket, data))
       );
 
       socket.on(
         MatchmakingEvents.LEAVE_QUEUE,
-        ErrorHandler.wrap(socket, () => this.handleLeaveMatchmaking(socket))
+        this._wrapSocketEvent(socket, () => this.handleLeaveMatchmaking(socket))
       );
 
       socket.on(
         MatchmakingEvents.GET_STATUS,
-        ErrorHandler.wrap(socket, () => this.handleGetMatchmakingStatus(socket))
+        this._wrapSocketEvent(socket, () => this.handleGetMatchmakingStatus(socket))
       );
     }
 
@@ -1704,12 +1939,12 @@ class SocketHandlers {
     // "too many actions" error to a player who is just talking.
     socket.on(
       SocketEvents.SEND_CHAT_MESSAGE,
-      ErrorHandler.wrap(socket, (data) => this.handleChatMessage(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleChatMessage(socket, data))
     );
 
     socket.on(
       SocketEvents.GET_CHAT_HISTORY,
-      ErrorHandler.wrap(socket, (data) => this.handleGetChatHistory(socket, data))
+      this._wrapSocketEvent(socket, (data) => this.handleGetChatHistory(socket, data))
     );
   }
 
@@ -1846,6 +2081,19 @@ class SocketHandlers {
       logger.info(
         `[DEAL_CARDS] ✓ Cards dealt successfully in room ${room.roomId}. Now cardsDealt=${room.cardsDealt}`
       );
+      this._gameEvent(room, 'deal', {
+        reason,
+        round: room.roundNumber || 1,
+        firstTurn: room.currentTurn,
+        deck: room.deck?.count ?? null,
+        wells: Array.isArray(room.deadPiles) ? room.deadPiles.map((pile) => pile.length) : [],
+        seats: room.getPlayers().map((p) => ({
+          seat: p.playerIndex,
+          playerId: p.playerId,
+          name: p.playerName,
+          cards: (room.playerHands.get(p.playerId) || []).length,
+        })),
+      });
       logger.info(
         `[DEAL_CARDS] Deck count: ${room.deck?.count}, Pozzetto piles: ${room.deadPiles?.length}`
       );
@@ -2525,6 +2773,13 @@ class SocketHandlers {
           );
         }
 
+        // First human back after a deploy restart: the room was HELD with no
+        // runtime (see _holdRoomForRestart). Their seat is connected again
+        // (clearGraceForReconnect above), so resume the interrupted turn /
+        // intermission now — before the state frame below, which then carries
+        // the live turnTimeRemaining.
+        if (!sameSocketRefresh) this._releaseRestartHold(targetRoom, 'player_rejoined');
+
         if (!sameSocketRefresh) {
           const reconnectedPayload = {
             playerId,
@@ -2542,6 +2797,10 @@ class SocketHandlers {
             status: 'reconnected',
           });
           logger.info(`[JOIN_ROOM] ✓ Player ${playerId} reconnected to room ${targetRoom.roomId}`);
+          this._gameEvent(targetRoom, 'reconnect', {
+            playerId,
+            seat: targetRoom.getPlayer(playerId)?.playerIndex ?? null,
+          });
         } else {
           logger.info(
             `[JOIN_ROOM] ↻ Player ${playerId} refreshed room ${targetRoom.roomId} on the SAME socket ${socket.id} — resync only, no reconnect announced`
@@ -2818,6 +3077,10 @@ class SocketHandlers {
    * @returns {Object}
    */
   inviteBotToRoom(data = {}) {
+    return logger.runWithRoom(data?.roomId, () => this._inviteBotToRoomImpl(data));
+  }
+
+  _inviteBotToRoomImpl(data = {}) {
     const roomId = data.roomId === null || data.roomId === undefined ? null : String(data.roomId);
     if (!roomId) {
       return { success: false, error: 'roomId required' };
@@ -3213,17 +3476,25 @@ class SocketHandlers {
    */
   triggerStartGame(roomId, options = {}) {
     const id = roomId == null ? roomId : String(roomId);
-    if (options.attemptId != null || this.gameService.getRoom(id)?.startAttemptProtocol === 1) {
-      return startBackendAttempt(this, id, options);
-    }
-    return this._triggerStartGameNow(roomId, options);
+    return logger.runWithRoom(id, () => {
+      if (options.attemptId != null || this.gameService.getRoom(id)?.startAttemptProtocol === 1) {
+        return startBackendAttempt(this, id, options);
+      }
+      return this._triggerStartGameNow(roomId, options);
+    });
   }
 
   abortStartFromBackend(data = {}) {
-    return abortBackendAttempt(this, String(data.roomId || ''), data.attemptId);
+    return logger.runWithRoom(data.roomId, () =>
+      abortBackendAttempt(this, String(data.roomId || ''), data.attemptId)
+    );
   }
 
   _triggerStartGameNow(roomId, options = {}) {
+    return logger.runWithRoom(roomId, () => this._triggerStartGameNowImpl(roomId, options));
+  }
+
+  _triggerStartGameNowImpl(roomId, options = {}) {
     const skins = options.skins || {};
     const normalizedRoomId = roomId === null || roomId === undefined ? roomId : String(roomId);
     let room = this.gameService.getRoom(normalizedRoomId);
@@ -3379,6 +3650,10 @@ class SocketHandlers {
   }
 
   syncRoomFromBackend(data = {}) {
+    return logger.runWithRoom(data?.roomId, () => this._syncRoomFromBackendImpl(data));
+  }
+
+  _syncRoomFromBackendImpl(data = {}) {
     const normalizedRoomId =
       data?.roomId === null || data?.roomId === undefined ? data?.roomId : String(data.roomId);
     if (!normalizedRoomId) {
@@ -3917,6 +4192,10 @@ class SocketHandlers {
   }
 
   getRoomRuntimeSnapshot(data = {}) {
+    return logger.runWithRoom(data?.roomId, () => this._getRoomRuntimeSnapshotImpl(data));
+  }
+
+  _getRoomRuntimeSnapshotImpl(data = {}) {
     const normalizedRoomId =
       data?.roomId === null || data?.roomId === undefined ? data?.roomId : String(data.roomId);
 
@@ -3989,6 +4268,10 @@ class SocketHandlers {
   }
 
   cancelRoomFromBackend(data = {}) {
+    return logger.runWithRoom(data?.roomId, () => this._cancelRoomFromBackendImpl(data));
+  }
+
+  _cancelRoomFromBackendImpl(data = {}) {
     const normalizedRoomId =
       data?.roomId === null || data?.roomId === undefined ? data?.roomId : String(data.roomId);
     if (!normalizedRoomId) {
@@ -4116,6 +4399,12 @@ class SocketHandlers {
         playerCount: room.getPlayers().length,
         humanCount: room.getPlayers().filter((p) => !p.isBot).length,
         botCount: room.getPlayers().filter((p) => p.isBot).length,
+        seats: room.getPlayers().map((p) => ({
+          seat: p.playerIndex,
+          name: p.playerName,
+          isBot: p.isBot === true,
+          connected: p.isConnected !== false,
+        })),
         inProgress: room.isInProgress ? room.isInProgress() : false,
         cardsDealt: !!room.cardsDealt,
         currentTurn: room.currentTurn ?? null,
@@ -4130,6 +4419,49 @@ class SocketHandlers {
   }
 
   /**
+   * Per-game log listing for the dev console: every room that still has a log
+   * (live OR finished — logs outlive the room for the configured retention),
+   * newest activity first, flagged with whether the room is still in memory.
+   */
+  listRoomLogsForDev() {
+    const rows = logger.gameLogStore.list().map((row) => ({
+      ...row,
+      ...this._roomLivenessForDev(row.roomId),
+    }));
+    return {
+      success: true,
+      rooms: rows,
+      retentionMs: logger.gameLogStore.retentionMs,
+      stats: logger.gameLogStore.stats(),
+    };
+  }
+
+  /**
+   * One room's log page (see GameLogStore.get for the cursor / filter opts).
+   * Secret-guarded at the HTTP layer.
+   * @param {string} roomId
+   * @param {object} [opts]
+   */
+  getRoomLogsForDev(roomId, opts = {}) {
+    const result = logger.gameLogStore.get(String(roomId || ''), opts);
+    if (!result.success) return result;
+    return { ...result, ...this._roomLivenessForDev(result.roomId) };
+  }
+
+  /**
+   * `live` = the match is still being played. A FINISHED room lingers in
+   * memory for the cleanup grace, so "room exists" alone would call a settled
+   * game live. `roomStatus` is the raw status (null once the room is gone).
+   * @private
+   */
+  _roomLivenessForDev(roomId) {
+    const room = this.gameService.getRoom(roomId);
+    if (!room) return { live: false, roomStatus: null };
+    const inPlay = room.isInProgress?.() === true || room.awaitingNextRound === true;
+    return { live: inPlay || room.status === GameRoomStatus.WAITING, roomStatus: room.status };
+  }
+
+  /**
    * Full dev detail for one room: seats with their REAL hands, meld group
    * counts, the discard pile, wells and scores. Secret-guarded at the HTTP
    * layer — never expose this to players.
@@ -4141,19 +4473,63 @@ class SocketHandlers {
       return { success: false, error: 'Room not found' };
     }
 
+    const playerScores = room.getPlayerScores ? room.getPlayerScores() : {};
+    const serializeMeld = (playerId, meld, idx) => {
+      const cards = Array.isArray(meld) ? meld : [];
+      let flags = null;
+      try {
+        flags = ActionHandlers._meldFlags(room, playerId, cards, idx);
+      } catch {
+        flags = null; // a malformed meld must not break the whole read
+      }
+      return {
+        index: idx,
+        cards: cards.map((card) => this._serializeCard(card)),
+        isBuraco: flags?.isBuraco === true,
+        clean: flags?.clean === true,
+        grade: flags?.grade ?? null,
+      };
+    };
+    const serializePile = (pile) =>
+      Array.isArray(pile) ? pile.map((card) => this._serializeCard(card)) : [];
     const players = room.getPlayers().map((p) => {
       const melds = room.playerMelds.get(p.playerId) || [];
+      const meldsOut = Array.isArray(melds)
+        ? melds.map((meld, idx) => serializeMeld(p.playerId, meld, idx))
+        : [];
       return {
         playerId: p.playerId,
         playerName: p.playerName,
         playerIndex: p.playerIndex,
+        team: ActionHandlers._teamId(p.playerIndex),
         isBot: p.isBot === true,
         isConnected: p.isConnected !== false,
+        isHost: room.hostPlayerId != null && String(room.hostPlayerId) === String(p.playerId),
         socketId: p.socketId || null,
         hand: (room.playerHands.get(p.playerId) || []).map((card) => this._serializeCard(card)),
-        meldGroups: Array.isArray(melds) ? melds.length : 0,
+        meldGroups: meldsOut.length,
+        melds: meldsOut,
+        wellsTaken: room.playerDeadPileCount?.get?.(p.playerId) || 0,
+        discardLock: this._serializeDiscardLock(room, p.playerId),
+        score: playerScores?.[p.playerId] ?? null,
       };
     });
+
+    const lastRound = room.lastRoundEndPayload || null;
+    const teamTotals = (scores) =>
+      Object.fromEntries(
+        Object.entries(scores || {}).map(([team, score]) => [
+          team,
+          score && typeof score === 'object' ? (score.total ?? null) : score,
+        ])
+      );
+    const lastRoundSummary = lastRound && {
+      winnerIndex: lastRound.winnerIndex ?? null,
+      batidaType: lastRound.batidaType ?? null,
+      winningTeam: lastRound.winningTeam ?? null,
+      teamScores: teamTotals(lastRound.teamScores),
+      matchEnded: lastRound.matchEnded !== false,
+    };
 
     return {
       success: true,
@@ -4162,18 +4538,33 @@ class SocketHandlers {
       status: room.status,
       maxPlayers: room.maxPlayers,
       ruleset: room.ruleset,
+      hostPlayerId: room.hostPlayerId ?? null,
       cardsDealt: !!room.cardsDealt,
       inProgress: room.isInProgress ? room.isInProgress() : false,
       currentTurn: room.currentTurn ?? null,
       turnTimeRemaining: room.getTurnTimeRemaining ? room.getTurnTimeRemaining() : null,
       turnTimeLimit: room.turnTimeLimit ?? null,
       hasDrawnCard: room.hasDrawnCard === true,
+      meldedThisTurn: room.meldedThisTurn === true,
+      // The current player's turn obligations, for the table view.
+      mustMeldCard: room.mustMeldCard ? this._serializeCard(room.mustMeldCard) : null,
+      drawnCardRestriction: Array.from(room.drawnCardThisTurnRestriction || []),
+      roundNumber: room.roundNumber || 0,
+      targetScore: room.targetScore ?? 0,
+      nextRoundAt: room.nextRoundAt ? new Date(room.nextRoundAt).toISOString() : null,
+      lastRound: lastRoundSummary || null,
+      spectatorCount: this.roomSpectators.get(room.roomId)?.size || 0,
       awaitingNextRound: room.awaitingNextRound === true,
       wellsTakenThisRound: room.wellsTakenThisRound || 0,
       deckCount: room.deck?.count ?? 0,
       deadPileCounts: Array.isArray(room.deadPiles)
         ? room.deadPiles.map((pile) => (Array.isArray(pile) ? pile.length : 0))
         : [],
+      // Full free-card pools (secret-guarded dev read): what a change-cards
+      // request may draw from, so the console can flag availability BEFORE
+      // the operator submits.
+      deck: (room.deck?.cards || []).map((card) => this._serializeCard(card)),
+      deadPiles: Array.isArray(room.deadPiles) ? room.deadPiles.map(serializePile) : [],
       discardPile: room.discardPile.map((card) => this._serializeCard(card)),
       players,
       playerScores: room.getPlayerScores ? room.getPlayerScores() : {},
@@ -4210,6 +4601,10 @@ class SocketHandlers {
    * @returns {{success: boolean, error?: string, missing?: Array, hand?: Array}}
    */
   changePlayerCards(data = {}) {
+    return logger.runWithRoom(data?.roomId, () => this._changePlayerCardsImpl(data));
+  }
+
+  _changePlayerCardsImpl(data = {}) {
     const roomId = data.roomId === null || data.roomId === undefined ? null : String(data.roomId);
     if (!roomId) {
       return { success: false, error: 'roomId required' };
@@ -4306,12 +4701,22 @@ class SocketHandlers {
     });
 
     if (missing.length > 0) {
+      // Card conservation: a hand can only be rebuilt from cards that are
+      // genuinely free (draw deck, the wells, or the target's own hand). Say
+      // WHERE each refused card sits so the operator sees why, instead of a
+      // vague "not available".
+      const located = missing.map((m) => ({ ...m, where: this._locateCardInstances(room, m, player) }));
       return {
         success: false,
         error:
-          'Requested cards are not available (they sit in another hand, a meld or the discard pile): ' +
-          missing.map((m) => (m.cardId !== undefined ? `#${m.cardId}` : `${m.rank}${m.suit ? ` of ${m.suit}` : ''}`)).join(', '),
-        missing,
+          'Requested cards are not free (only the deck, the wells and the target\'s own hand can be used): ' +
+          located
+            .map((m) => {
+              const label = m.cardId !== undefined ? `#${m.cardId}` : `${m.rank}${m.suit ? ` of ${m.suit}` : ''}`;
+              return m.where.length ? `${label} (${m.where.join(', ')})` : `${label} (no copy left)`;
+            })
+            .join('; '),
+        missing: located,
       };
     }
 
@@ -4350,6 +4755,40 @@ class SocketHandlers {
       hand: matches.map((card) => card.toJSON()),
       deckCount: room.deck.count,
     };
+  }
+
+  /**
+   * Where every instance of a requested card currently sits, for the
+   * change-cards rejection message. Only the places a dev replace may NOT
+   * touch are reported (other hands, melds, discard pile); free copies were
+   * already consumed by the match pass.
+   * @private
+   * @param {GameRoom} room
+   * @param {{cardId?: number, suit?: string, rank?: string}} req
+   * @param {PlayerSession} target
+   * @returns {string[]} e.g. ['seat 1 hand', 'seat 0 meld', 'discard pile']
+   */
+  _locateCardInstances(room, req, target) {
+    const isJoker = String(req.rank || '').toUpperCase() === 'JOKER';
+    const hit = (card) =>
+      req.cardId !== undefined
+        ? card.cardId === req.cardId
+        : isJoker
+          ? card.isJoker
+          : card.suit === req.suit && card.rank === req.rank;
+    const where = [];
+    for (const p of room.getPlayers()) {
+      if (p.playerId !== target.playerId) {
+        const hand = room.playerHands.get(p.playerId) || [];
+        where.push(...hand.filter(hit).map(() => `seat ${p.playerIndex} hand`));
+      }
+      const melds = room.playerMelds.get(p.playerId) || [];
+      for (const meld of melds) {
+        if (Array.isArray(meld)) where.push(...meld.filter(hit).map(() => `seat ${p.playerIndex} meld`));
+      }
+    }
+    where.push(...(room.discardPile || []).filter(hit).map(() => 'discard pile'));
+    return where;
   }
 
   /**
@@ -4557,6 +4996,7 @@ class SocketHandlers {
         logger.info(
           `[LEAVE_ROOM] ✓ Player ${playerId} left room ${room.roomId}. Remaining players: ${room.players.size}`
         );
+        this._gameEvent(room, 'leave', { playerId, remaining: room.players.size });
       }
     } else {
       logger.warn(`[LEAVE_ROOM] ✗ Player ${playerId} failed to leave room`);
@@ -4698,6 +5138,12 @@ class SocketHandlers {
     this._notifyBackendRoomClosed(room.roomId, reason, room.backendBaseUrl || null);
     this._scheduleRoomDeletion(room);
 
+    this._gameEvent(room, 'forfeit', {
+      playerId: leavingPlayerId,
+      reason,
+      winnerSeat: payload.winnerIndex ?? null,
+      hostLeft: isHost === true,
+    });
     logger.info(
       `[FORFEIT] ${leavingPlayerId} forfeited in-progress room ${room.roomId} (${reason}). ` +
         `Winner index ${payload.winnerIndex} (hostLeft=${isHost}). Room closed.`
@@ -5309,12 +5755,12 @@ class SocketHandlers {
    * @param {string} roomId
    * @param {string} playerId
    */
-  _scheduleWaitingLeave(roomId, playerId) {
+  _scheduleWaitingLeave(roomId, playerId, delayMs = SocketHandlers.WAITING_GRACE_MS) {
     const key = `${roomId}:${playerId}`;
     const existing = this._waitingGraceTimers.get(key);
     if (existing) clearTimeout(existing);
 
-    const timerId = setTimeout(() => {
+    const timerId = setTimeout(logger.bindRoom(roomId, () => {
       this._waitingGraceTimers.delete(key);
       const room = this.gameService.getRoom(roomId);
       // Game started, or room already gone → nothing to do. awaitingNextRound
@@ -5367,7 +5813,7 @@ class SocketHandlers {
       logger.info(
         `[DISCONNECT] ✓ Grace expired: removed ${playerId} from waiting room ${roomId}`
       );
-    }, SocketHandlers.WAITING_GRACE_MS);
+    }), delayMs);
     timerId.unref?.();
     this._waitingGraceTimers.set(key, timerId);
   }
@@ -5411,7 +5857,7 @@ class SocketHandlers {
 
     room.hostHeartbeatMissed = 0;
     const handle = setInterval(
-      () => this._hostHeartbeatTick(room),
+      logger.bindRoom(room.roomId, () => this._hostHeartbeatTick(room)),
       config.hostHeartbeat.intervalMs
     );
     handle.unref?.();
@@ -7468,6 +7914,21 @@ class SocketHandlers {
   async handleDisconnect(socket, reason = 'unknown') {
     this._lastChatAt.delete(socket.id);
     this._pendingJoins.delete(socket.id);
+    // RESTART DRAIN. io.close() fires this for every socket at once, and each
+    // one used to run the full player-disconnect path: grace entered, seat
+    // socketId nulled, player_disconnected broadcast to sockets being closed,
+    // a `player.status: disconnected` webhook queued for the backend, and a
+    // state persist racing the Redis quit a few lines later (it lost — the
+    // grace marker landed but the snapshot did not; had it won AFTER
+    // disposeTimers() it would have written awaitingNextRound=false and lost
+    // an intermission match). None of that is a player action. The seats stay
+    // exactly as the final snapshot captured them; the next boot re-derives
+    // every human seat as "awaiting reconnect" (resumePersistedRooms).
+    if (this.restartDraining) {
+      this.matchmakingQueue?.removeBySocketId(socket.id);
+      this.gameService.removeSocket(socket.id);
+      return;
+    }
     // P1-11: a player waiting in matchmaking has no room/player mapping, so the
     // `if (!playerId) return` below would leak their queue entry forever. Remove
     // by socket id before that early return.
@@ -7531,6 +7992,12 @@ class SocketHandlers {
         );
         return;
       }
+      this._gameEvent(room, 'disconnect', {
+        playerId,
+        seat: player?.playerIndex ?? null,
+        reason,
+        inProgress: room.isInProgress?.() === true,
+      });
 
       // If the game has not started yet, HOLD the seat through a short grace
       // window instead of hard-leaving immediately (A1). A swipe-killed host that
@@ -7709,6 +8176,13 @@ class SocketHandlers {
           logger.info(
             `[DRAW_CARD] ✓ Player ${playerId} drew from deck. Hand: ${playerHand.length - 1} → ${playerHand.length}, Deck: ${room.deck.count + 1} → ${room.deck.count}`
           );
+          this._gameEvent(room, 'draw', {
+            playerId,
+            seat: player?.playerIndex,
+            card: this._briefCard(actualDrawnCard),
+            hand: playerHand.length,
+            deck: room.deck.count,
+          });
         }
       }
 
@@ -7779,6 +8253,16 @@ class SocketHandlers {
       logger.info(
         `[PLAY_MELD] ✓ Player ${playerId} successfully played meld. Hand now: ${playerHand.length} cards. Sending updated game state.`
       );
+      this._gameEvent(room, 'meld', {
+        playerId,
+        seat: player?.playerIndex,
+        cards: this._briefCards(result.broadcast?.cards),
+        meldIndex: result.broadcast?.meldIndex ?? null,
+        isBuraco: result.broadcast?.isBuraco === true,
+        grade: result.broadcast?.grade ?? null,
+        hand: playerHand.length,
+        pozzettoTaken: result.broadcast?.pozzettoTaken || 0,
+      });
       // Send updated game state to all players to keep UI in sync. The well
       // broadcast goes FIRST — see _broadcastPozzettoBeforeState.
       this._broadcastPozzettoBeforeState(room, result);
@@ -7837,6 +8321,15 @@ class SocketHandlers {
     if (result.success) {
       this._stopTurnTimer(room);
       this._resetInactiveCounter(room, playerId);
+      this._gameEvent(room, 'discard', {
+        playerId,
+        seat: player?.playerIndex,
+        card: this._briefCard(result.broadcast?.card),
+        hand: (room.playerHands.get(playerId) || []).length,
+        pozzettoTaken: result.broadcast?.pozzettoTaken || 0,
+        minimumMeldFailed: Boolean(result.broadcast?.minimumMeld),
+        nextSeat: result.roundEnded ? null : (result.turnChanged?.newPlayerIndex ?? room.currentTurn),
+      });
       if (result.roundEnded) {
         this._broadcastRoundEndAndCleanup(room, result.roundEnded);
         return;
@@ -7935,11 +8428,11 @@ class SocketHandlers {
     if (!room) return;
     if (!room.gameEndedAt) room.gameEndedAt = new Date();
     if (room.finalizeCleanupHandle) clearTimeout(room.finalizeCleanupHandle);
-    room.finalizeCleanupHandle = setTimeout(() => {
+    room.finalizeCleanupHandle = setTimeout(logger.bindRoom(room.roomId, () => {
       room.finalizeCleanupHandle = null;
       logger.info(`[GAME_ENDED] Cleaning up finished room ${room.roomId}`);
       this.gameService.deleteRoom(room.roomId);
-    }, graceMs);
+    }), graceMs);
   }
 
   _broadcastRoundEndAndCleanup(room, roundEnded) {
@@ -7953,6 +8446,21 @@ class SocketHandlers {
     logger.info(
       `[GAME_ENDED] Room ${room.roomId} finished. Winner index: ${roundEnded.winnerIndex}`
     );
+    this._gameEvent(room, roundEnded.matchEnded === false ? 'round_end' : 'match_end', {
+      round: room.roundNumber || null,
+      winnerSeat: roundEnded.winnerIndex ?? null,
+      winnerId: roundEnded.winnerId ?? null,
+      batida: roundEnded.batidaType ?? null,
+      winningTeam: roundEnded.winningTeam ?? null,
+      teamScores: Object.fromEntries(
+        Object.entries(roundEnded.teamScores || {}).map(([team, score]) => [
+          team,
+          score && typeof score === 'object' ? (score.total ?? null) : score,
+        ])
+      ),
+      cumulative: roundEnded.cumulativeTeamScores ?? (room.cumulativeTeamScores ? Object.fromEntries(room.cumulativeTeamScores) : null),
+      targetScore: room.targetScore ?? null,
+    });
 
     // #11 multi-round: open the intermission BEFORE anything is emitted. A socket
     // that drops in the same tick as the GAME_ENDED broadcast must already see
@@ -8185,7 +8693,7 @@ class SocketHandlers {
     // watchdog fires on. Re-base whenever an explicit delay is supplied; the
     // normal round-end path passes none and keeps the deadline it just set.
     if (overrideMs != null || !room.nextRoundAt) room.nextRoundAt = Date.now() + delayMs;
-    room.nextRoundHandle = setTimeout(() => {
+    room.nextRoundHandle = setTimeout(logger.bindRoom(room.roomId, () => {
       room.nextRoundHandle = null;
       // A throw inside a timer callback is an UNCAUGHT exception that kills the
       // whole socket process — every other room with it. _startScheduledNextRound
@@ -8198,7 +8706,7 @@ class SocketHandlers {
       } catch (err) {
         this._failNextRound(room.roomId, err);
       }
-    }, delayMs);
+    }), delayMs);
     // Never let a pending intermission hold the event loop open on shutdown.
     if (typeof room.nextRoundHandle.unref === 'function') room.nextRoundHandle.unref();
     // Persist awaitingNextRound + the absolute deadline so a restart inside the
@@ -8574,6 +9082,13 @@ class SocketHandlers {
       logger.info(
         `[GO_DOWN] ✓ Player ${playerId} successfully went down. Sending updated game state.`
       );
+      this._gameEvent(room, 'go_down', {
+        playerId,
+        seat: player?.playerIndex,
+        melds: (result.broadcast?.melds || []).map((meld) => this._briefCards(meld)),
+        hand: (room.playerHands.get(playerId) || []).length,
+        pozzettoTaken: result.broadcast?.pozzettoTaken || 0,
+      });
       // Send updated game state to all players to keep UI in sync. The well
       // broadcast goes FIRST — see _broadcastPozzettoBeforeState.
       this._broadcastPozzettoBeforeState(room, result);
@@ -8659,6 +9174,15 @@ class SocketHandlers {
       logger.info(
         `[ADD_TO_MELD] ✓ Player ${playerId} successfully added card to meld. Sending updated game state.`
       );
+      this._gameEvent(room, 'add_to_meld', {
+        playerId,
+        seat: player?.playerIndex,
+        cards: this._briefCards(cardsToAdd),
+        targetSeat: targetPlayerIndex,
+        targetMeldIndex,
+        hand: (room.playerHands.get(playerId) || []).length,
+        pozzettoTaken: result.broadcast?.pozzettoTaken || 0,
+      });
       // Send updated game state to all players to keep UI in sync. The well
       // broadcast goes FIRST — see _broadcastPozzettoBeforeState.
       this._broadcastPozzettoBeforeState(room, result);
@@ -8811,6 +9335,12 @@ class SocketHandlers {
       logger.info(
         `[PICK_UP_PILE] ✓ Player ${playerId} picked up ${pickedCards.length} cards. Hand: ${handSizeBefore} → ${playerHand.length}`
       );
+      this._gameEvent(room, 'take_pile', {
+        playerId,
+        seat: player?.playerIndex,
+        cards: this._briefCards(pickedCards),
+        hand: playerHand.length,
+      });
 
       // Broadcast discard pile taken event (using client-expected event name)
       // Note: client expects 'discard_pile_taken' message type, not 'pile_picked_up'
@@ -9169,7 +9699,7 @@ class SocketHandlers {
       const watchdogMs = seatDisconnected
         ? SocketHandlers.DISCONNECT_TURN_WATCHDOG_MS
         : SocketHandlers.UNLIMITED_TURN_WATCHDOG_MS;
-      room.turnTimerTickHandle = setTimeout(async () => {
+      room.turnTimerTickHandle = setTimeout(logger.bindRoom(room.roomId, async () => {
         room.turnTimerTickHandle = null;
         if (!room.isInProgress()) return;
         if (this._ownershipEnabled()) {
@@ -9177,7 +9707,7 @@ class SocketHandlers {
           if (!ownership.owned) return;
         }
         this._onTurnTimerExpired(room);
-      }, watchdogMs);
+      }), watchdogMs);
       return;
     }
 
@@ -9208,7 +9738,7 @@ class SocketHandlers {
     this.botCoordinator?.onRoomStateChanged(room);
 
     // Single authoritative expiry timer (no per-second broadcast).
-    room.turnTimerTickHandle = setTimeout(async () => {
+    room.turnTimerTickHandle = setTimeout(logger.bindRoom(room.roomId, async () => {
       room.turnTimerTickHandle = null;
       room.turnTimeRemaining = 0;
       room.turnTimerDeadline = null;
@@ -9218,7 +9748,7 @@ class SocketHandlers {
         if (!ownership.owned) return;
       }
       this._onTurnTimerExpired(room);
-    }, durationMs);
+    }), durationMs);
   }
 
   /**
@@ -9331,6 +9861,12 @@ class SocketHandlers {
     logger.info(
       `[TURN_TIMER] Timer expired for player ${playerId} (index: ${room.currentTurn}) in room ${room.roomId}`
     );
+    this._gameEvent(room, 'timeout', {
+      playerId,
+      seat: room.currentTurn,
+      connected: currentPlayer.isConnected !== false,
+      isBot: currentPlayer.isBot === true,
+    });
 
     this.io.to(room.roomId).emit(SocketEvents.TURN_TIMER_EXPIRED, {
       playerIndex: room.currentTurn,
@@ -9392,6 +9928,14 @@ class SocketHandlers {
           room.drawnCardThisTurnRestriction = new Set();
           room.clearDiscardLock(playerId);
           autoDrawnCard = drawnCard;
+          this._gameEvent(room, 'draw', {
+            playerId,
+            seat: room.currentTurn,
+            card: this._briefCard(drawnCard),
+            hand: (room.playerHands.get(playerId) || []).length,
+            deck: room.deck?.count ?? null,
+            auto: true,
+          });
           this.io.to(room.roomId).emit(SocketEvents.CARD_DRAWN, {
             type: 'card_drawn',
             playerIndex: room.currentTurn,
@@ -9480,6 +10024,16 @@ class SocketHandlers {
     if (cardToDiscard) {
       const result = ActionHandlers.handleDiscard(room, playerId, cardToDiscard);
       if (result.success) {
+        this._gameEvent(room, 'discard', {
+          playerId,
+          seat: result.broadcast?.playerIndex ?? null,
+          card: this._briefCard(result.broadcast?.card),
+          hand: (room.playerHands.get(playerId) || []).length,
+          pozzettoTaken: result.broadcast?.pozzettoTaken || 0,
+          auto: true,
+          meldsReturned,
+          nextSeat: result.roundEnded ? null : (result.turnChanged?.newPlayerIndex ?? room.currentTurn),
+        });
         this.io.to(room.roomId).emit(SocketEvents.CARD_DISCARDED, {
           ...result.broadcast,
           // >0 when the discard was only possible because this turn's melds were
@@ -9576,6 +10130,7 @@ class SocketHandlers {
     logger.warn(
       `[TURN_TIMER] Force-advanced turn ${previousTurn} -> ${room.currentTurn} to avoid a frozen game`
     );
+    this._gameEvent(room, 'turn_forced', { fromSeat: previousTurn, toSeat: room.currentTurn });
   }
 
   /**
@@ -9803,6 +10358,10 @@ class SocketHandlers {
    * @returns {{success:boolean,error?:string}}
    */
   async executeBotIntent(roomId, playerId, intent = {}) {
+    return logger.runWithRoom(roomId, () => this._executeBotIntent(roomId, playerId, intent));
+  }
+
+  async _executeBotIntent(roomId, playerId, intent = {}) {
     const room = this.gameService.getRoom(roomId);
     if (!room) return { success: false, error: 'Room not found' };
 
@@ -9941,6 +10500,12 @@ class SocketHandlers {
     logger.info(
       `[TAKE_POZZETTO] ✓ Player ${playerId} took pozzetto (${pozzettoCards.length} cards). Hand: ${playerHand.length - pozzettoCards.length} → ${playerHand.length}`
     );
+    this._gameEvent(room, 'take_pozzetto', {
+      playerId,
+      seat: player?.playerIndex,
+      cards: this._briefCards(pozzettoCards),
+      hand: playerHand.length,
+    });
 
     // Emit to all players
     this.io.to(room.roomId).emit(SocketEvents.POZZETTO_TAKEN, {

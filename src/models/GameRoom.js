@@ -6,6 +6,7 @@
 const { Deck } = require('./Deck');
 const { GameRoomStatus } = require('../constants');
 const GameValidator = require('../validators/GameValidator');
+const logger = require('../utils/logger');
 
 const DEFAULT_TURN_TIME_LIMIT_SECONDS = 30;
 
@@ -264,6 +265,21 @@ class GameRoom {
     this.backendBaseUrl = null;
     /** Absolute epoch-ms deadline of the current turn (null when no timer). */
     this.turnTimerDeadline = null;
+    /**
+     * Restart hold (deploy resilience). Set by SocketHandlers._holdRoomForRestart
+     * on a room restored after a process restart: `{ since, untilMs, remainingTurnMs,
+     * reason }` while no turn timer / bot / next-round deal may run, null once
+     * released (a human rejoined, or the hold expired). The handle is the expiry
+     * timer; disposeTimers() cancels it on teardown.
+     */
+    this.restartHold = null;
+    this.restartHoldHandle = null;
+    /**
+     * Precise ms left in the interrupted turn, carried over from the persisted
+     * snapshot (FailureManager.persistGameState → turnTimerRemainingMs). Read
+     * once by the restart-hold release; null when the snapshot had no live timer.
+     */
+    this.restoredTurnRemainingMs = null;
     /** Seconds remaining in current turn (snapshot; see getTurnTimeRemaining). */
     this.turnTimeRemaining = DEFAULT_TURN_TIME_LIMIT_SECONDS;
     /** Default seconds per turn */
@@ -636,7 +652,7 @@ class GameRoom {
       this.players.forEach((player) => {
         const hand = this.deck.deal(11);
         this.playerHands.set(player.playerId, hand);
-        console.log(`[GameRoom.dealCards] Dealt ${hand.length} cards to player ${player.playerId} (index: ${player.playerIndex})`);
+        logger.info(`[GameRoom.dealCards] Dealt ${hand.length} cards to player ${player.playerId} (index: ${player.playerIndex})`, { roomId: this.roomId });
       });
       
       // Create pozzetto (pot) - two 11-card piles.
@@ -653,10 +669,10 @@ class GameRoom {
       }
       
       this.cardsDealt = true;
-      console.log(`[GameRoom] Cards dealt. Deck: ${this.deck.count}, Pozzetto: ${this.pozzetto.length} cards`);
+      logger.info(`[GameRoom] Cards dealt. Deck: ${this.deck.count}, Pozzetto: ${this.pozzetto.length} cards`, { roomId: this.roomId });
       return true;
     } catch (error) {
-      console.error('[GameRoom] Error dealing cards:', error);
+      logger.error(`[GameRoom] Error dealing cards in room ${this.roomId}: ${error.message}`, error);
       throw error;
     }
   }
@@ -751,7 +767,7 @@ class GameRoom {
       turnOrder,
     };
 
-    console.log(`[GameRoom] First-turn draw: winner=index ${winnerIndex}, direction=${turnDirection}, rounds=${rounds.length}`);
+    logger.info(`[GameRoom] First-turn draw: winner=index ${winnerIndex}, direction=${turnDirection}, rounds=${rounds.length}`, { roomId: this.roomId });
     return this.firstTurnDraw;
   }
 
@@ -811,8 +827,9 @@ class GameRoom {
     // leaving it null is what silences it for rounds 2+.
     this.firstTurnDraw = null;
 
-    console.log(
-      `[GameRoom] Round ${this.roundNumber} starts with index ${starter.playerIndex} (${best} leads${closer ? ', closed last round' : ''})`
+    logger.info(
+      `[GameRoom] Round ${this.roundNumber} starts with index ${starter.playerIndex} (${best} leads${closer ? ', closed last round' : ''})`,
+      { roomId: this.roomId }
     );
     return { winnerIndex: starter.playerIndex, reason: closer ? 'closed_previous' : 'leading_side' };
   }
@@ -853,6 +870,9 @@ class GameRoom {
       // emit hands into dead sockets).
       'nextRoundHandle',
       'hostHeartbeatHandle',
+      // Deploy-restart hold expiry: a torn-down room must never re-arm its
+      // runtime from a stale hold.
+      'restartHoldHandle',
     ];
     for (const name of handles) {
       if (this[name]) {
@@ -868,6 +888,7 @@ class GameRoom {
     this.hostHeartbeatMissed = 0;
     this.hostHeartbeatSeq = 0;
     this.turnTimerDeadline = null;
+    this.restartHold = null;
   }
 
   /**

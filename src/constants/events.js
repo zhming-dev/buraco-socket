@@ -120,6 +120,11 @@ const SocketEvents = {
   // either flag is set. Payload: { maintenance_mode: bool, restart_server: bool,
   // message?: string }. Triggered via POST /webhooks/development (x-webhook-secret).
   DEVELOPMENT: 'development',
+  // Graceful restart drain (deploy). Sent to every socket right before the
+  // process closes them on purpose; the game state is snapshotted and resumes
+  // on the next boot. Clients should keep the session, let the socket
+  // auto-reconnect, then re-emit join_room (+ get_game_state) as on any resume.
+  SERVER_RESTARTING: 'server_restarting',
 
   // Dev-only hand surgery. operator → server (socket event, requires the
   // webhook secret in `secret`), server → operator (result ack). REPLACES a

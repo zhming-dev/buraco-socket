@@ -307,10 +307,10 @@ describe('#anti ping-pong discard lock', () => {
       service.deleteRoom('pingpong');
     });
 
-    it('RULE A: the LONE-take restriction lifts on a meld, and dies at the turn boundary', () => {
+    it('RULE A: the LONE-take restriction SURVIVES a meld, and dies at the turn boundary', () => {
       // Re-pointed at a ONE-card take on 2026-09-02: under RULE B there is no
-      // multi-take restriction left to lift. "Meld it or keep it this turn" is
-      // now the lone-card take's rule, and only its rule.
+      // multi-take restriction left. RULE CHANGE 2026-09-21 (owner): a meld no
+      // longer lifts it either — "keep it this turn" is the whole rule now.
       const { service, room, handlers, s1 } = liveRoom();
       const top = KH();
       purgeTwins(room, 'p1', top);
@@ -318,23 +318,22 @@ describe('#anti ping-pong discard lock', () => {
       handlers.handlePickUpPile(s1, {});
       expect(GameValidator.validateDiscard(room, 'p1', top).isValid).to.equal(false);
 
-      // A meld this turn lifts it — "meld it or keep it", never "keep it forever".
-      // A lone-card take arms BOTH mechanisms (RULE A), so a real meld has to
-      // pay off both: ActionHandlers.handlePlayMeld sets meldedThisTurn AND
-      // calls clearDiscardLock. Do the same two things here, or the assertion
-      // below is really testing the cross-turn lock by accident.
+      // A meld this turn changes nothing about it. `meldedThisTurn` is what a
+      // real meld sets (ActionHandlers.handlePlayMeld); the validator must not
+      // read it as a release any more.
       room.meldedThisTurn = true;
       expect(
         GameValidator.validateDiscard(room, 'p1', top).reason,
-        'the per-turn restriction is gone; only the cross-turn lock remains'
-      ).to.equal('pingPongLocked');
+        'the per-turn restriction is still the reason after a meld'
+      ).to.equal('drawnCardRestriction');
+      // Even with the cross-turn lock gone, the per-turn half holds on its own.
       room.clearDiscardLock('p1');
       expect(
         GameValidator.validateDiscard(room, 'p1', top).isValid,
-        'melding this turn releases the taken card'
-      ).to.equal(true);
+        'melding this turn does not release the taken card'
+      ).to.equal(false);
 
-      // And it is per-TURN: nextTurn() wipes the set outright.
+      // It is per-TURN: nextTurn() wipes the set outright.
       room.meldedThisTurn = false;
       room.nextTurn();
       expect(room.drawnCardThisTurnRestriction.size, 'wiped at the boundary').to.equal(0);
@@ -742,47 +741,59 @@ describe('#anti ping-pong discard lock', () => {
       expect(room.discardLocks.size).to.equal(0);
     });
 
-    it('a successful meld clears the lock', () => {
+    it('a successful meld KEEPS the lock (2026-09-21)', () => {
+      // Owner rule change: melding — anything — no longer unblocks the card the
+      // pile was taken for. The lock keeps its countdown and the taken card
+      // stays unthrowable while a free card is in hand.
       const room = makeRoom();
       const locked = KH();
+      const spare = card('clubs', '9');
       const kings = [card('spades', 'K'), card('diamonds', 'K'), card('clubs', 'K')];
-      room.playerHands.set('p1', [...kings, locked, card('clubs', '9')]);
+      room.playerHands.set('p1', [...kings, locked, spare]);
       room.armDiscardLock('p1', locked);
 
       const res = ActionHandlers.handlePlayMeld(room, 'p1', kings);
       expect(res.success).to.equal(true);
-      expect(room.discardLocks.has('p1')).to.equal(false);
+      expect(room.discardLocks.get('p1')).to.deep.equal(lockFor(locked));
       expect(
-        GameValidator.validateDiscard(room, 'p1', locked).isValid,
-        'the meld paid the lock off'
+        GameValidator.validateDiscard(room, 'p1', locked).reason,
+        'the meld paid nothing off'
+      ).to.equal('pingPongLocked');
+      expect(
+        GameValidator.validateDiscard(room, 'p1', spare).isValid,
+        'the free card is still the way out of the turn'
       ).to.equal(true);
     });
 
-    it('add-to-meld clears the lock', () => {
+    it('add-to-meld KEEPS the lock (2026-09-21)', () => {
       const room = makeRoom();
       const locked = KH();
       // Two spare cards, not one: leaving a LONE card turns the add into a
       // go-out and the keep-a-discardable guard refuses it for its own reasons.
       const kings = [card('spades', 'K'), card('diamonds', 'K'), card('clubs', 'K')];
+      // The other deck's K♥: free to add to the kings, and NOT under the lock.
+      const freeKH = KH();
       room.playerHands.set('p1', [
         ...kings,
         locked,
+        freeKH,
         card('clubs', '9'),
         card('diamonds', '5'),
       ]);
       expect(ActionHandlers.handlePlayMeld(room, 'p1', kings).success).to.equal(true);
 
-      // Re-arm as if the player took the pile after going down, then pay it off
-      // with an add rather than a fresh meld.
+      // Re-arm as if the player took the pile after going down, then add a
+      // DIFFERENT card: the lock must still be standing afterwards.
       room.armDiscardLock('p1', locked);
-      const res = ActionHandlers.handleAddToMeld(room, 'p1', [locked], 0, 0);
+      const res = ActionHandlers.handleAddToMeld(room, 'p1', [freeKH], 0, 0);
       expect(res.success).to.equal(true);
-      expect(room.discardLocks.has('p1')).to.equal(false);
+      expect(room.discardLocks.get('p1')).to.deep.equal(lockFor(locked));
+      expect(GameValidator.validateDiscard(room, 'p1', locked).reason).to.equal('pingPongLocked');
     });
 
-    it('UNDOING the meld puts the lock back', () => {
-      // Otherwise the player walks away unlocked while their client still shows
-      // the lock — the two then disagree about a legal discard, i.e. a hung turn.
+    it('UNDOING the meld leaves the lock exactly as it was', () => {
+      // The meld never touched the lock (2026-09-21), and the undo restores the
+      // snapshot it took — so the lock reads the same before, during and after.
       const room = makeRoom();
       const locked = KH();
       const kings = [card('spades', 'K'), card('diamonds', 'K'), card('clubs', 'K')];
@@ -790,7 +801,7 @@ describe('#anti ping-pong discard lock', () => {
       room.armDiscardLock('p1', locked);
 
       ActionHandlers.handlePlayMeld(room, 'p1', kings);
-      expect(room.discardLocks.has('p1')).to.equal(false);
+      expect(room.discardLocks.get('p1')).to.deep.equal(lockFor(locked));
 
       const undo = ActionHandlers.handleUndoMeld(room, 'p1');
       expect(undo.success).to.equal(true);

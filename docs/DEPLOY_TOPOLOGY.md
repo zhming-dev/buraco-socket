@@ -64,10 +64,13 @@ multi-node work (Redis adapter + room-owner lease + soak test) lands.
    - Kubernetes: `replicas: 1`, no HPA on the socket Deployment.
    - PM2: `instances: 1` (do **not** use `cluster` mode / `-i max`).
    - Docker Compose / ECS: desired count `1`.
-3. **Rolling deploy = brief downtime.** Because state is in-process, a deploy ends
-   live games on that node. Prefer deploying during low-traffic windows until
-   failover (Phase 3 of the scaling plan) exists. `SIGTERM`/`SIGINT` trigger a
-   graceful shutdown (timers cleared, sockets closed, Redis quit).
+3. **Rolling deploy = brief downtime, NOT lost games.** `SIGTERM`/`SIGINT` run a
+   restart drain: every room is snapshotted to Redis (exact turn time left,
+   intermission deadline), clients get `server_restarting` and auto-reconnect,
+   and the next boot HOLDS each restored room until a player rejoins, then resumes
+   the interrupted turn. Requires a durable Redis and a supervisor that restarts
+   the process. Full contract + runbook: [`RESTART_RESILIENCE.md`](RESTART_RESILIENCE.md).
+   Still prefer low-traffic windows: players see a few seconds of reconnecting.
 
 ## Path to multi-node (deferred)
 

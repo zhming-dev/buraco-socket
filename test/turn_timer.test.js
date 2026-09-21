@@ -135,13 +135,15 @@ describe('GameValidator.validateDiscard — drawn-card restriction', () => {
     expect(result.isValid).to.equal(true);
   });
 
-  it('allows discard of drawn card after melding (restriction lifted)', () => {
+  it('still blocks the drawn card after melding (2026-09-21: a meld lifts nothing)', () => {
     const room = makeRoom();
+    room.playerHands.set('p1', [card('hearts', '3'), card('spades', '9')]);
     room.drawnCardThisTurnRestriction.add('hearts-3');
     room.meldedThisTurn = true;
 
     const result = GameValidator.validateDiscard(room, 'p1', card('hearts', '3'));
-    expect(result.isValid).to.equal(true);
+    expect(result.isValid).to.equal(false);
+    expect(result.reason).to.equal('drawnCardRestriction');
   });
 
   // (Removed: the "sole-card drawn-restriction escape" — with the relaxed rule
@@ -311,7 +313,11 @@ describe('ActionHandlers.handleUndoMeld', () => {
 
     expect(result.success).to.equal(true);
     expect(room.meldedThisTurn).to.equal(true);
-    expect(GameValidator.validateDiscard(room, 'p1', card('spades', '9')).isValid).to.equal(true);
+    // The restriction round-trips through the undo and, since 2026-09-21, an
+    // earlier meld does not lift it either — the 9♠ stays blocked while the
+    // returned meld cards give the player something else to throw.
+    expect(room.drawnCardThisTurnRestriction.has('spades-9')).to.equal(true);
+    expect(GameValidator.validateDiscard(room, 'p1', card('spades', '9')).reason).to.equal('drawnCardRestriction');
   });
 
   it('undoes add-to-meld: removes appended cards from existing meld', () => {

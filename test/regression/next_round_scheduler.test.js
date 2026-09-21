@@ -827,8 +827,13 @@ describe('#11 multi-round — server-driven next round', () => {
   // ---------------------------------------------------------------------------
   // Restart resilience
   // ---------------------------------------------------------------------------
+  // Deploy-restart contract (test/regression/restart_hold_resume.test.js has
+  // the full matrix): on boot the room is HELD — the deal is NOT re-armed until
+  // a human rejoins (_releaseRestartHold), because _startScheduledNextRound
+  // settles the match with `no_humans` when nobody is connected, and after a
+  // restart nobody is. The re-arm itself still runs off the persisted deadline.
   describe('a restart during the intermission', () => {
-    it('re-arms the deal from the persisted absolute deadline', async () => {
+    it('holds the room on boot, then re-arms the deal from the persisted absolute deadline', async () => {
       const service = newService();
       const handlers = new SocketHandlers(io, service);
       const room = liveRoom(service);
@@ -843,6 +848,13 @@ describe('#11 multi-round — server-driven next round', () => {
       const resumed = await handlers.resumePersistedRooms();
 
       expect(resumed).to.equal(1);
+      expect(room.restartHold, 'held until a player rejoins').to.exist;
+      expect(room.nextRoundHandle, 'no deal armed while held').to.equal(null);
+      expect(room.awaitingNextRound).to.equal(true);
+
+      handlers._releaseRestartHold(room, 'player_rejoined');
+
+      expect(room.restartHold).to.equal(null);
       expect(room.nextRoundHandle).to.not.equal(null);
       // Floored so the deal does not land before the clients reconnect.
       expect(room.nextRoundAt - Date.now()).to.be.below(
@@ -863,6 +875,7 @@ describe('#11 multi-round — server-driven next round', () => {
       room.nextRoundAt = Date.now() - 30000;
 
       await handlers.resumePersistedRooms();
+      handlers._releaseRestartHold(room, 'player_rejoined');
 
       // Keeping the past deadline would make every reconnect replay advertise
       // "0ms" for a deal that is still NEXT_ROUND_RESUME_FLOOR_MS away — exactly
@@ -1628,14 +1641,18 @@ describe('#11 multi-round — server-driven next round', () => {
       const specSocket = fakeSocket('sSpec', emitted);
       registry.set('sSpec', specSocket);
       handlers._addSpectator(specSocket, 'nri', '99', 'Watcher');
-      // Invited to the free 4th seat while WAITING; the host force-starts before
-      // the spectator answers. Seat 3 is still EMPTY, so `_seatsLocked` is the
-      // ONLY thing that can refuse this — revert it and the spectator is told yes.
+      // Invite while WAITING, then fill the last seat before starting a valid
+      // 2v2 match. The pending answer is delivered during the intermission.
       handlers.handleInviteToSeat(registry.get('s10'), { spectatorId: '99', seat: 3 });
       expect(room._pendingInvites.get('99')).to.be.an('object');
-      room.startGame(true);
+      registry.set('s40', fakeSocket('s40', emitted));
+      service.joinRoom('nri', '40', 'P3', 's40');
+      expect(room.startGame(true)).to.equal(true);
       room.dealCards();
       endRound(handlers, room, intermediatePayload());
+      // Simulate a missing seat in a restored intermission. Keep it empty so
+      // the match-phase guard alone must reject the old invitation.
+      room.removePlayer('40');
       emitted.length = 0;
 
       handlers.handleRespondSeatInvite(specSocket, { accept: true });

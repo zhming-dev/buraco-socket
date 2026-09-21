@@ -9,6 +9,7 @@
     --bg: #0e1116;
     --panel: #161b23;
     --panel2: #1c232e;
+    --panel3: #222b38;
     --border: #2a3342;
     --text: #e6ebf2;
     --muted: #8b98ab;
@@ -16,16 +17,17 @@
     --danger: #ff5d5d;
     --warn: #ffb454;
     --ok: #3dd68c;
+    --felt: #1f4a3a;
+    --felt2: #275e49;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   }
   * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans); }
   header {
     display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
-    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    padding: 12px 20px; border-bottom: 1px solid var(--border);
     position: sticky; top: 0; background: var(--bg); z-index: 5;
   }
   header h1 { font-size: 16px; margin: 0; letter-spacing: .4px; }
@@ -33,14 +35,16 @@
   .spacer { flex: 1; }
   .secret-box { display: flex; gap: 8px; align-items: center; }
   .secret-box label { color: var(--muted); font-size: 12px; }
-  input[type=text], input[type=password] {
+  input[type=text], input[type=password], select {
     background: var(--panel2); color: var(--text); border: 1px solid var(--border);
-    border-radius: 6px; padding: 7px 10px; font-size: 13px; outline: none; min-width: 220px;
+    border-radius: 6px; padding: 7px 10px; font-size: 13px; outline: none; font-family: var(--sans);
   }
-  input:focus { border-color: var(--accent); }
+  input[type=text], input[type=password] { min-width: 200px; }
+  input:focus, select:focus { border-color: var(--accent); }
+  input.bad { border-color: var(--danger); }
   button {
     background: var(--panel2); color: var(--text); border: 1px solid var(--border);
-    border-radius: 6px; padding: 7px 14px; font-size: 13px; cursor: pointer;
+    border-radius: 6px; padding: 7px 14px; font-size: 13px; cursor: pointer; white-space: nowrap; font-family: var(--sans);
   }
   button:hover:not(:disabled) { border-color: var(--accent); }
   button:disabled { opacity: .45; cursor: not-allowed; }
@@ -48,68 +52,47 @@
   button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
   button.warn { background: var(--warn); border-color: var(--warn); color: #20140a; }
   button.small { padding: 4px 10px; font-size: 12px; }
-  main { display: grid; grid-template-columns: 380px 1fr; gap: 16px; padding: 16px 20px; align-items: start; }
+  button.ghost { background: transparent; }
+  main { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px; padding: 16px 20px; align-items: start; }
   @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
-  .panel {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-    padding: 14px 16px; margin-bottom: 16px;
-  }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
   .panel h2 {
     font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px;
-    color: var(--muted); margin: 0 0 12px;
+    color: var(--muted); margin: 0 0 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   }
+  .panel h2 .hint { text-transform: none; letter-spacing: 0; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
   .row:last-child { margin-bottom: 0; }
-  .status-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px;
-  }
-  .stat { background: var(--panel2); border-radius: 8px; padding: 8px 10px; }
+  .status-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .stat { background: var(--panel2); border-radius: 8px; padding: 8px 10px; min-width: 0; }
   .stat .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .8px; }
-  .stat .v { font-size: 15px; font-family: var(--mono); margin-top: 2px; }
-  .badge {
-    display: inline-block; padding: 2px 9px; border-radius: 999px;
-    font-size: 11px; font-weight: 600; letter-spacing: .4px;
-  }
+  .stat .v { font-size: 14px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: .3px; white-space: nowrap; }
   .badge.on { background: rgba(255,93,93,.15); color: var(--danger); border: 1px solid rgba(255,93,93,.4); }
   .badge.off { background: rgba(61,214,140,.12); color: var(--ok); border: 1px solid rgba(61,214,140,.35); }
   .badge.neutral { background: var(--panel2); color: var(--muted); border: 1px solid var(--border); }
+  .badge.live { background: rgba(61,214,140,.12); color: var(--ok); border: 1px solid rgba(61,214,140,.35); }
+  .badge.waiting { background: rgba(255,180,84,.12); color: var(--warn); border: 1px solid rgba(255,180,84,.35); }
+  .badge.ended { background: var(--panel2); color: var(--muted); border: 1px solid var(--border); }
+  .badge.teamA { background: rgba(79,140,255,.16); color: #9dbdff; border: 1px solid rgba(79,140,255,.4); }
+  .badge.teamB { background: rgba(255,180,84,.16); color: #ffd28a; border: 1px solid rgba(255,180,84,.4); }
+  .badge.buraco { background: rgba(61,214,140,.16); color: var(--ok); border: 1px solid rgba(61,214,140,.4); }
+  .badge.dirty { background: rgba(255,93,93,.14); color: #ffb3b3; border: 1px solid rgba(255,93,93,.35); }
+  .badge.tiny { padding: 1px 7px; font-size: 10px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th { text-align: left; color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .8px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
-  td { padding: 7px 8px; border-bottom: 1px solid rgba(42,51,66,.5); font-family: var(--mono); font-size: 12px; }
+  td { padding: 8px; border-bottom: 1px solid rgba(42,51,66,.5); font-size: 13px; vertical-align: middle; }
+  td.id { font-family: var(--mono); font-size: 12px; }
   tr.room-row { cursor: pointer; }
   tr.room-row:hover td { background: var(--panel2); }
   tr.room-row.selected td { background: rgba(79,140,255,.12); }
-  .cards { display: flex; flex-wrap: wrap; gap: 4px; }
-  .card {
-    display: inline-flex; align-items: center; justify-content: center;
-    min-width: 30px; height: 24px; padding: 0 5px; border-radius: 4px;
-    background: #f5f0e6; color: #1a1a1a; font: 600 11px var(--mono);
-    border: 1px solid #cfc6b4;
-  }
-  .card.red { color: #c0392b; }
-  .card.joker { background: #2a3342; color: var(--warn); border-color: var(--warn); }
-  .player {
-    background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
-    padding: 10px 12px; margin-bottom: 10px;
-  }
-  .player .head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
-  .player .name { font-weight: 600; }
-  .player .pid { color: var(--muted); font-family: var(--mono); font-size: 11px; }
-  .player .turn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; }
-  .change-form { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
-  .change-form input { flex: 1; min-width: 240px; }
-  .hint { color: var(--muted); font-size: 11px; font-family: var(--mono); }
-  .log {
-    font-family: var(--mono); font-size: 11px; color: var(--muted);
-    max-height: 140px; overflow-y: auto; background: var(--panel2);
-    border-radius: 8px; padding: 8px 10px;
-  }
+  tr.room-row td.actions { text-align: right; white-space: nowrap; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .log { font-family: var(--mono); font-size: 11px; color: var(--muted); max-height: 160px; overflow-y: auto; background: var(--panel2); border-radius: 8px; padding: 8px 10px; }
   .log .ok { color: var(--ok); }
   .log .err { color: var(--danger); }
   .empty { color: var(--muted); padding: 18px 0; text-align: center; font-size: 13px; }
-  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 12.5px; }
-  .kv .k { color: var(--muted); }
-  .kv .v { font-family: var(--mono); }
   a { color: var(--accent); }
   .toast {
     position: fixed; bottom: 18px; right: 18px; z-index: 20;
@@ -119,6 +102,177 @@
   }
   .toast.err { border-left-color: var(--danger); }
   .toast.show { display: block; }
+
+  /* ---- workspace tabs ---- */
+  .ws-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+  .ws-head .title { font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); }
+  .ws-head .room-id { font-family: var(--mono); font-size: 13px; }
+  .tabs { display: inline-flex; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 3px; gap: 2px; }
+  .tabs button { border: 0; background: transparent; padding: 5px 14px; border-radius: 6px; color: var(--muted); font-size: 12.5px; }
+  .tabs button.active { background: var(--panel3); color: var(--text); }
+  .tabs button:hover:not(.active) { color: var(--text); border-color: transparent; }
+  .tabs.sm button { padding: 3px 10px; font-size: 12px; }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+  label.chk { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+
+  /* ---- 1:1 board (geometry from the mobile TableGeometry, ocean palette) ---- */
+  .board-wrap { position: relative; }
+  .board {
+    position: relative; width: 100%; aspect-ratio: 852 / 393; overflow: hidden;
+    background: #16272B; border-radius: 14px; border: 1px solid #23434B;
+    font-family: var(--sans); user-select: none;
+  }
+  .board * { box-sizing: border-box; }
+  .felt {
+    position: absolute; border-radius: calc(20px * var(--u)); border: calc(5px * var(--u)) solid #5E858E;
+    background: radial-gradient(ellipse at 50% 18%, rgba(234,241,242,.55) 0%, rgba(234,241,242,0) 78%), #9FC0C6;
+  }
+  .felt .divider { position: absolute; left: 50%; width: calc(3px * var(--u)); background: rgba(35,67,75,.28); transform: translateX(-50%); }
+  /* playing card, mobile face style: #F7F6F3 face, #9AA0A8 rim, radius 10/217 */
+  .pc {
+    position: absolute; background: #F7F6F3; border-radius: 6.5%/4.6%; box-shadow: 0 1px 2px rgba(0,0,0,.35);
+    border: 1px solid #9AA0A8; overflow: hidden; color: #17181c; line-height: 1;
+  }
+  .pc.red { color: #C62828; }
+  .pc .ix { position: absolute; left: 6.6%; top: 3.2%; font-weight: 400; font-size: calc(var(--ch) * .258); letter-spacing: -.02em; font-family: Georgia, "Times New Roman", serif; }
+  .pc .ix.wide { font-size: calc(var(--ch) * .22); }
+  .pc .ixs { position: absolute; left: 44%; top: 7%; font-size: calc(var(--ch) * .15); }
+  .pc .ixb { position: absolute; left: 8%; top: 32%; font-size: calc(var(--ch) * .2); }
+  .pc .pip { position: absolute; left: 50%; top: 58%; transform: translate(-50%, -50%); font-size: calc(var(--ch) * .34); }
+  .pc .pip.n { font-size: calc(var(--ch) * .2); top: 60%; }
+  .pc .pip.n small { display: block; font-size: calc(var(--ch) * .12); text-align: center; font-family: Georgia, serif; }
+  .pc img.court { position: absolute; right: 4%; bottom: 4%; width: 62%; height: auto; border-radius: 4px; }
+  .pc.joker { color: #6b4b12; }
+  .pc.joker .ix { font-size: calc(var(--ch) * .14); top: 5%; letter-spacing: 0; font-family: var(--sans); font-weight: 800; }
+  .pc.lock { box-shadow: 0 0 0 calc(3px * var(--u)) #F5C451, 0 1px 2px rgba(0,0,0,.35); }
+  .pc.top { box-shadow: 0 0 0 calc(3px * var(--u)) #2F8FE0, 0 1px 2px rgba(0,0,0,.35); }
+  .pc.restrict { box-shadow: 0 0 0 calc(3px * var(--u)) #FF7043, 0 1px 2px rgba(0,0,0,.35); }
+  /* deck back (mobile DeckComponent): blue gradient, inner white rim, centre disc */
+  .deckback {
+    position: absolute; border-radius: 8%/6%; background: linear-gradient(135deg, #0D47A1, #1976D2);
+    box-shadow: 0 1px 2px rgba(0,0,0,.45);
+  }
+  .deckback::before { content: ''; position: absolute; inset: 4%; border: 2px solid rgba(255,255,255,.5); border-radius: inherit; }
+  .deckback::after { content: ''; position: absolute; left: 50%; top: 50%; width: 33%; padding-top: 33%; background: rgba(255,255,255,.2); border-radius: 50%; transform: translate(-50%, -50%); }
+  .cntbadge {
+    position: absolute; background: #fff; color: #111; border-radius: 999px; font-weight: 800; text-align: center;
+    box-shadow: 0 1px 2px rgba(0,0,0,.3); display: flex; align-items: center; justify-content: center; font-family: var(--sans);
+  }
+  .well { position: absolute; border-radius: 8%/6%; background: #2E7D32; box-shadow: 0 1px 2px rgba(0,0,0,.45); }
+  .well::before { content: ''; position: absolute; inset: 4%; border: 2px solid rgba(255,255,255,.5); border-radius: inherit; }
+  .well.taken { background: rgba(255,255,255,.05); box-shadow: none; }
+  .well.taken::before { border-color: rgba(255,255,255,.2); }
+  .discardbox { position: absolute; background: rgba(255,255,255,.2); border-radius: calc(10px * var(--u)); }
+  /* nameplate: avatar circle + name below, white bold with dark halo */
+  .plate { position: absolute; display: flex; flex-direction: column; align-items: center; pointer-events: none; z-index: 70; }
+  .plate .av {
+    border-radius: 50%; background: rgba(21,16,36,.8); color: #fff; display: flex; align-items: center; justify-content: center;
+    font-weight: 700; box-shadow: 0 0 0 calc(1.5px * var(--u)) rgba(0,0,0,.6); position: relative;
+  }
+  .plate .av.bot { background: rgba(29,78,115,.8); }
+  .plate .av.clock { background: rgba(255,255,255,.95); color: #1a1a1a; }
+  .plate .av.clock .ring { position: absolute; inset: 0; border-radius: 50%; -webkit-mask: radial-gradient(circle, transparent 0 63%, #000 64%); mask: radial-gradient(circle, transparent 0 63%, #000 64%); }
+  .plate .nm { color: #fff; font-weight: 700; white-space: nowrap; text-shadow: 0 0 2px #000, 0 0 6px rgba(0,0,0,.87); }
+  .plate .nm.off { color: #ffb3b3; }
+  /* HUD chrome (GlassContainer #1F1730 @85%, radius 13; accent #F5C451) */
+  .hud { position: absolute; display: flex; align-items: center; gap: 8px; z-index: 80; }
+  .glass { background: rgba(31,23,48,.85); border-radius: 13px; padding: 6px 10px; color: #fff; display: flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 12px; }
+  .glass .num { font-weight: 900; color: #F5C451; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .timer { font-weight: 800; font-variant-numeric: tabular-nums; font-size: 12px; }
+  .timer.ok { color: #69F0AE; } .timer.warn { color: #FFAB40; } .timer.crit { color: #FF5252; font-size: 14px; }
+  .vs { background: rgba(0,0,0,.42); border: 1px solid rgba(255,255,255,.12); border-radius: 22px; padding: 5px 10px; display: flex; align-items: center; gap: 6px; color: #fff; font-size: 12px; font-weight: 600; }
+  .vs .v { color: #FFD54F; font-weight: 800; letter-spacing: .5px; padding: 0 6px; font-size: 13px; }
+  .vs .mini { display: inline-flex; align-items: center; gap: 5px; }
+  .mini .av { width: 26px; height: 26px; border-radius: 50%; background: rgba(21,16,36,.9); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #fff; }
+  .mini .av.bot { background: #1D4E73; }
+  .chip { width: 90px; background: rgba(31,23,48,.85); border-radius: 13px; padding: 4px 8px; display: flex; align-items: center; gap: 6px; color: #fff; border: 1.5px solid transparent; }
+  .chip .av { width: 24px; height: 24px; border-radius: 50%; background: rgba(21,16,36,.9); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex: none; }
+  .chip .av.bot { background: #1D4E73; }
+  .chip .col { min-width: 0; }
+  .chip .n { font-size: 10px; color: rgba(255,255,255,.72); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1; }
+  .chip .s { font-size: 13px; font-weight: 900; color: #F5C451; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .chip.turn { border-color: rgba(245,196,81,.75); }
+  .badgeburaco { position: absolute; background: #F5C451; color: #3a2a00; font-weight: 900; font-size: 10px; padding: 1px 5px; border-radius: 6px; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+  .board .empty-board { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #cfe8db; font-size: 14px; z-index: 2; }
+  .board-note { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); margin: 8px 0 12px; }
+  .board-note b { color: var(--text); font-weight: 500; }
+  .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+
+  /* ---- tools under the board ---- */
+  .tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; }
+  .tool-card { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .tool-card .th { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 4px; flex-wrap: wrap; }
+  .tool-card .th .sub { color: var(--muted); font-weight: 400; font-size: 12px; }
+  .tool-card .how { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .tool-card .how b { color: var(--text); font-weight: 500; }
+  .tool-card .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 8px 0 5px; }
+  .change-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .change-form input { flex: 1; min-width: 200px; font-family: var(--mono); }
+  .preview { margin-top: 8px; min-height: 18px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .preview .err { color: #ffb3b3; font-size: 12px; }
+  .preview .legend { font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 3px 0 8px; vertical-align: -1px; }
+  .legend i.deck { background: var(--ok); } .legend i.well { background: var(--warn); } .legend i.hand { background: #8b98ab; } .legend i.none { background: var(--danger); }
+  .fan { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; min-height: 20px; }
+  .fan .none { color: var(--muted); font-size: 12px; font-style: italic; }
+  /* small inline card used in previews / story (same face rules, fixed size) */
+  .cf {
+    display: inline-flex; flex-direction: column; justify-content: space-between;
+    width: 36px; height: 50px; border-radius: 5px; padding: 3px 4px;
+    background: #F7F6F3; color: #16181d; font-weight: 700; font-size: 13px; line-height: 1;
+    box-shadow: 0 1px 2px rgba(0,0,0,.45), inset 0 0 0 1px rgba(0,0,0,.08); position: relative; flex: none;
+  }
+  .cf .r { font-size: 13px; }
+  .cf .s { align-self: flex-end; font-size: 15px; }
+  .cf.red { color: #C62828; }
+  .cf.joker { background: linear-gradient(150deg, #ffe08a, #ff9a6b); color: #3a1d0b; }
+  .cf.sm { width: 30px; height: 42px; font-size: 11px; padding: 2px 3px; }
+  .cf.sm .r { font-size: 11px; } .cf.sm .s { font-size: 13px; }
+  .cf.xs { width: 24px; height: 32px; font-size: 9px; padding: 2px; border-radius: 4px; }
+  .cf.xs .r { font-size: 9px; } .cf.xs .s { font-size: 10px; }
+  .cf.ghost { opacity: .75; }
+  .cf.src-deck { box-shadow: 0 0 0 2px var(--ok); }
+  .cf.src-well { box-shadow: 0 0 0 2px var(--warn); }
+  .cf.src-hand { box-shadow: 0 0 0 2px #8b98ab; }
+  .cf.src-none { box-shadow: 0 0 0 2px var(--danger); opacity: .45; }
+  .cf.src-none::after { content: ''; position: absolute; left: 4px; right: 4px; top: 50%; border-top: 2px solid var(--danger); transform: rotate(-20deg); }
+
+  /* ---- the story (game logs) ---- */
+  .logs-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .logs-toolbar select { max-width: 100%; }
+  .logs-toolbar input[type=text] { min-width: 160px; }
+  .logs-toolbar #logs-room { max-width: 460px; }
+  .logs-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); margin-bottom: 8px; min-height: 16px; }
+  .logview { background: #0a0d12; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; height: 64vh; min-height: 280px; overflow: auto; }
+  .logview.raw { font-family: var(--mono); font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+  .logview .ln { padding: 1px 0; border-bottom: 1px solid rgba(42,51,66,.25); }
+  .logview .ln .t { color: var(--muted); }
+  .logview .ln .lv { display: inline-block; min-width: 46px; font-weight: 600; }
+  .logview .ln.ERROR .lv { color: var(--danger); }
+  .logview .ln.ERROR .m { color: #ffb3b3; }
+  .logview .ln.WARN .lv { color: var(--warn); }
+  .logview .ln.INFO .lv { color: var(--accent); }
+  .logview .ln.DEBUG .lv, .logview .ln.DEBUG .m { color: var(--muted); }
+  .logview .ln .d { color: #6f7d92; display: block; padding-left: 18px; }
+  .logview .ln.hit { background: rgba(255,180,84,.08); }
+  .logview .empty { padding: 40px 0; }
+  .logview.human { font-size: 13.5px; line-height: 1.6; }
+  .logview.human .ev { display: flex; gap: 10px; align-items: flex-start; padding: 5px 4px; border-bottom: 1px solid rgba(42,51,66,.35); }
+  .logview.human .ev .t { color: var(--muted); font-family: var(--mono); font-size: 11px; min-width: 88px; padding-top: 4px; }
+  .logview.human .ev .ic { width: 22px; text-align: center; flex: none; padding-top: 1px; }
+  .logview.human .ev .body { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .logview.human .ev .body b { color: var(--text); }
+  .logview.human .ev .sub { color: var(--muted); font-size: 12px; width: 100%; }
+  .logview.human .ev.WARN .body { color: var(--warn); }
+  .logview.human .ev.ERROR .body { color: #ffb3b3; }
+  .logview.human .ev.turn { background: rgba(79,140,255,.06); }
+  .logview.human .ev.end { background: rgba(61,214,140,.08); }
+  .logview.human .ev.life .body { color: var(--muted); font-size: 12.5px; }
+  .logview.human .ev .tag { font-family: var(--mono); font-size: 10px; color: var(--muted); background: var(--panel2); border-radius: 4px; padding: 1px 6px; }
+  .logview.human .ev .seat { color: var(--muted); font-size: 12px; }
+  .logview.human .divider { display: flex; align-items: center; gap: 10px; color: #9dbdff; font-size: 12px; padding: 8px 4px 2px; }
+  .logview.human .divider::before, .logview.human .divider::after { content: ''; flex: 1; border-top: 1px solid rgba(79,140,255,.25); }
 </style>
 </head>
 <body>
@@ -145,7 +299,7 @@
     <div class="panel">
       <h2>Ops Broadcasts</h2>
       <div class="row">
-        <input type="text" id="ops-message" placeholder="optional player-facing message">
+        <input type="text" id="ops-message" placeholder="optional player-facing message" style="flex:1;min-width:0">
       </div>
       <div class="row">
         <button class="danger" id="btn-maint-on">Maintenance ON</button>
@@ -156,8 +310,8 @@
       </div>
       <div class="row">
         <button class="danger" id="btn-restart-real">Restart server process</button>
-        <span class="hint">graceful SIGTERM after 3s (needs pm2/systemd to come back)</span>
       </div>
+      <div class="hint">real restart = graceful SIGTERM after 3s (needs pm2/systemd to come back)</div>
     </div>
 
     <div class="panel">
@@ -172,24 +326,65 @@
       <table>
         <thead>
           <tr>
-            <th>Room</th><th>Status</th><th>Players</th><th>Turn</th><th>Deck</th><th>Wells</th>
+            <th>Room</th><th>Status</th><th>Players</th><th>Turn</th><th>Deck</th><th>Wells</th><th></th>
           </tr>
         </thead>
         <tbody id="rooms-body">
-          <tr><td colspan="6" class="empty">enter the webhook secret to load rooms</td></tr>
+          <tr><td colspan="7" class="empty">enter the webhook secret to load rooms</td></tr>
         </tbody>
       </table>
     </div>
 
-    <div class="panel" id="detail-panel" style="display:none">
-      <h2>Room Detail <span class="hint" id="detail-room-id"></span></h2>
-      <div class="kv" id="detail-info"></div>
-      <h2 style="margin-top:16px">Seats &amp; Hands</h2>
-      <div class="hint" style="margin-bottom:10px">
-        change cards: comma/space separated <b>AH 2S 10C JK</b> (rank+suit or suit+rank,
-        joker = JK) or paste a JSON array — the whole hand is REPLACED in the given order
+    <div class="panel" id="workspace">
+      <div class="ws-head">
+        <span class="title">Room</span>
+        <span class="room-id" id="ws-room-id">—</span>
+        <button class="small ghost" id="btn-copy-id" title="copy roomId" disabled>copy id</button>
+        <div class="spacer"></div>
+        <label class="chk" title="pause the 2s table refresh (e.g. while editing hands)">
+          <input type="checkbox" id="detail-pause"> pause refresh
+        </label>
+        <div class="tabs">
+          <button id="tab-detail" class="active">Table</button>
+          <button id="tab-logs">Story</button>
+        </div>
       </div>
-      <div id="players"></div>
+
+      <div class="tab-pane active" id="pane-detail">
+        <div class="empty" id="detail-empty">click a room above to see the table</div>
+        <div id="detail-body" style="display:none">
+          <div class="board-wrap"><div class="board" id="board"></div></div>
+          <div class="board-note" id="board-note"></div>
+          <div class="tools" id="tools"></div>
+        </div>
+      </div>
+
+      <div class="tab-pane" id="pane-logs">
+        <div class="logs-toolbar">
+          <select id="logs-room" title="every game that still has a log (finished games included)">
+            <option value="">— pick a game —</option>
+          </select>
+          <input type="text" id="logs-room-manual" placeholder="or type a roomId" style="min-width:140px">
+          <button class="small" id="btn-logs-open">Open</button>
+          <div class="tabs sm" title="Story: the game as it happened (deals, draws, discards, melds, timeouts, ends) + warnings · Raw: every server line">
+            <button id="mode-human" class="active">Story</button>
+            <button id="mode-raw">Raw log</button>
+          </div>
+          <select id="logs-level" title="minimum level">
+            <option value="debug">all levels</option>
+            <option value="info" selected>info+</option>
+            <option value="warn">warn+</option>
+            <option value="error">errors only</option>
+          </select>
+          <input type="text" id="logs-q" placeholder="filter (e.g. Bob, discard, hearts)">
+          <label class="chk"><input type="checkbox" id="logs-follow" checked> follow</label>
+          <button class="small" id="btn-logs-reload">Reload</button>
+          <button class="small" id="btn-logs-download" disabled>Download .log</button>
+          <span class="hint" id="logs-retention"></span>
+        </div>
+        <div class="logs-meta" id="logs-meta"></div>
+        <div class="logview human" id="logview"><div class="empty">pick a game to read what happened — logs are kept for at least 2h after a game ends</div></div>
+      </div>
     </div>
   </section>
 </main>
@@ -205,6 +400,7 @@
   var selectedRoomId = null;
   var pollTimer = null;
   var restarting = false;
+  var lastDetail = null; // latest /dev/api/rooms/<id> payload for the selected room
 
   var $ = function (id) { return document.getElementById(id); };
   var secretInput = $('secret');
@@ -218,12 +414,12 @@
   }
 
   function log(msg, isErr) {
-    var el = $('log');
+    var box = $('log');
     var line = document.createElement('div');
     line.className = isErr ? 'err' : 'ok';
     line.textContent = new Date().toLocaleTimeString() + '  ' + msg;
-    el.insertBefore(line, el.firstChild);
-    while (el.children.length > 80) el.removeChild(el.lastChild);
+    box.insertBefore(line, box.firstChild);
+    while (box.children.length > 80) box.removeChild(box.lastChild);
   }
 
   function api(path, options) {
@@ -242,38 +438,89 @@
     });
   }
 
-  // ---- card rendering -------------------------------------------------------
+  function postJson(path, payload) {
+    return api(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-webhook-secret': secret },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  function fmtTime(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleTimeString([], { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+  }
+
+  function setText(node, text) {
+    text = String(text);
+    if (node.textContent !== text) node.textContent = text;
+  }
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  function txt(s) { return document.createTextNode(s); }
+
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
+
+  function teamName(t) { return t === 'teamA' ? 'Team A' : t === 'teamB' ? 'Team B' : (t || ''); }
+
+  // ---- playing cards ----------------------------------------------------------
 
   var SUITS = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' };
   var RED = { hearts: 1, diamonds: 1 };
 
+  function isJoker(c) { return !!c && (c.isJoker || c.rank === 'joker'); }
+
   function cardLabel(c) {
-    if (c.isJoker || c.rank === 'joker') return 'JK';
+    if (!c) return '?';
+    if (isJoker(c)) return 'JK';
     return c.rank + (SUITS[c.suit] || '?');
   }
 
-  function cardChip(c) {
-    var red = c.isJoker || RED[c.suit];
-    var span = document.createElement('span');
-    span.className = 'card' + (c.isJoker ? ' joker' : red ? ' red' : '');
-    span.title = 'cardId ' + c.cardId;
-    span.textContent = cardLabel(c);
-    return span;
-  }
+  function cardKey(c) { return c.cardId != null ? 'id:' + c.cardId : cardLabel(c); }
 
-  function cardsBlock(cards) {
-    var div = document.createElement('div');
-    div.className = 'cards';
-    if (!cards || !cards.length) {
-      div.className = 'hint';
-      div.textContent = '(empty hand)';
-      return div;
+  // A card face: rank top-left, suit bottom-right, red suits red, joker gold.
+  function cardFace(c, cls) {
+    var d = el('span', 'cf' + (isJoker(c) ? ' joker' : RED[c.suit] ? ' red' : '') + (cls ? ' ' + cls : ''));
+    if (isJoker(c)) {
+      d.appendChild(el('span', 'r', 'JK'));
+      d.appendChild(el('span', 's', '★'));
+    } else {
+      d.appendChild(el('span', 'r', String(c.rank)));
+      d.appendChild(el('span', 's', SUITS[c.suit] || '?'));
     }
-    cards.forEach(function (c) { div.appendChild(cardChip(c)); });
-    return div;
+    d.title = cardLabel(c) + (c.cardId != null ? ' · id ' + c.cardId : '');
+    return d;
   }
 
-  // ---- shorthand parser (AH / HA / 10C / JK) --------------------------------
+  // Cheap diff: only touch the DOM when the card list actually changed.
+  function fillFan(container, cards, opts) {
+    opts = opts || {};
+    var sig = (cards || []).map(cardKey).join(',') + '|' + (opts.markLast ? 'L' : '') + (opts.markIds || []).join('.') + '|' + (opts.size || '');
+    if (container.dataset.sig === sig) return;
+    container.dataset.sig = sig;
+    container.innerHTML = '';
+    if (!cards || !cards.length) {
+      container.appendChild(el('span', 'none', opts.emptyText || 'nothing'));
+      return;
+    }
+    var marks = {};
+    (opts.markIds || []).forEach(function (id) { marks[String(id)] = 1; });
+    cards.forEach(function (c, i) {
+      var cls = opts.size || '';
+      if (opts.markLast && i === cards.length - 1) cls += ' top';
+      if (c.cardId != null && marks[String(c.cardId)]) cls += ' mark';
+      container.appendChild(cardFace(c, cls.trim()));
+    });
+  }
+
+  // ---- shorthand parser (AH / HA / 10C / JK) ----------------------------------
 
   var RANK_RE = '(10|[AKQJakqj2-9])';
   var SUIT_RE = '([HDCShdcs])';
@@ -294,7 +541,6 @@
   function parseCardSpec(text) {
     var trimmed = (text || '').trim();
     if (!trimmed) return { error: 'empty' };
-    // Raw JSON array pass-through (from a previous result or a script).
     if (trimmed[0] === '[') {
       try {
         var arr = JSON.parse(trimmed);
@@ -305,14 +551,62 @@
     var cards = [];
     for (var i = 0; i < tokens.length; i++) {
       var parsed = parseToken(tokens[i]);
-      if (parsed === undefined) return { error: 'cannot parse token "' + tokens[i] + '"' };
+      if (parsed === undefined) return { error: 'can\'t read "' + tokens[i] + '" — use e.g. AH, 10C, JK' };
       if (parsed) cards.push(parsed);
     }
     if (!cards.length) return { error: 'no cards' };
     return { cards: cards };
   }
 
-  // ---- server status / rooms ------------------------------------------------
+  // Mirror of the server's change-cards matching (deck → own hand → wells,
+  // one physical instance per request) so the operator sees availability
+  // BEFORE submitting. Anything not free is located for the error text.
+  function checkAvailability(cards, detail, playerId) {
+    if (!detail) return null;
+    var me = (detail.players || []).find(function (p) { return String(p.playerId) === String(playerId); });
+    var pools = [
+      { src: 'deck', cards: detail.deck || [] },
+      { src: 'hand', cards: me ? me.hand : [] },
+    ];
+    (detail.deadPiles || []).forEach(function (pile) { pools.push({ src: 'well', cards: pile }); });
+    var used = {};
+    var hit = function (req, c) {
+      if (req.cardId != null) return String(c.cardId) === String(req.cardId);
+      var reqJoker = String(req.rank).toUpperCase() === 'JOKER';
+      if (reqJoker) return isJoker(c);
+      return c.suit === req.suit && String(c.rank).toUpperCase() === String(req.rank).toUpperCase();
+    };
+    var locate = function (req) {
+      var where = [];
+      (detail.players || []).forEach(function (p) {
+        if (String(p.playerId) !== String(playerId)) {
+          p.hand.forEach(function (c) { if (hit(req, c)) where.push("in " + p.playerName + "'s hand"); });
+        }
+        (p.melds || []).forEach(function (m) {
+          (m.cards || []).forEach(function (c) { if (hit(req, c)) where.push("on the table (" + p.playerName + "'s meld " + (m.index + 1) + ")"); });
+        });
+      });
+      (detail.discardPile || []).forEach(function (c) { if (hit(req, c)) where.push('in the discard pile'); });
+      return where;
+    };
+    return cards.map(function (req) {
+      for (var i = 0; i < pools.length; i++) {
+        var pool = pools[i];
+        for (var j = 0; j < pool.cards.length; j++) {
+          var c = pool.cards[j];
+          if (c.cardId != null && used[c.cardId]) continue;
+          if (hit(req, c)) {
+            if (c.cardId != null) used[c.cardId] = 1;
+            return { req: req, src: pool.src, card: c };
+          }
+        }
+      }
+      var where = locate(req);
+      return { req: req, src: null, where: where.length ? where : ['not in the game at all (no copy left)'] };
+    });
+  }
+
+  // ---- server status / rooms --------------------------------------------------
 
   function renderStatus(body) {
     var badge = $('maintenance-badge');
@@ -335,24 +629,42 @@
     }
 
     var stats = body.stats || {};
+    var gl = body.gameLog || {};
+    var up = body.uptimeSeconds || 0;
     var fields = [
       ['node', body.nodeId],
       ['pid', body.pid],
-      ['uptime', Math.floor((body.uptimeSeconds || 0) / 60) + 'm'],
+      ['uptime', up >= 3600 ? Math.floor(up / 3600) + 'h ' + Math.floor((up % 3600) / 60) + 'm' : Math.floor(up / 60) + 'm'],
       ['rooms', (stats.totalRooms || 0) + ' (' + (stats.activeRooms || 0) + ' live)'],
       ['players', stats.totalPlayers || 0],
       ['sockets', stats.activeSockets || 0],
+      ['game logs', plural(gl.rooms || 0, 'game') + ' · ' + plural(gl.entries || 0, 'line')],
+      ['kept for', gl.retentionMs ? Math.round(gl.retentionMs / 3600000 * 10) / 10 + 'h' + (gl.fileEnabled ? ' + on disk' : '') : '—'],
     ];
     var grid = $('server-stats');
     grid.innerHTML = '';
     fields.forEach(function (f) {
-      var d = document.createElement('div');
-      d.className = 'stat';
-      d.innerHTML = '<div class="k"></div><div class="v"></div>';
-      d.querySelector('.k').textContent = f[0];
-      d.querySelector('.v').textContent = f[1];
+      var d = el('div', 'stat');
+      d.appendChild(el('div', 'k', f[0]));
+      var v = el('div', 'v', f[1]);
+      v.title = String(f[1]);
+      d.appendChild(v);
       grid.appendChild(d);
     });
+  }
+
+  function statusBadge(r) {
+    var s = String(r.status || '');
+    var cls = r.inProgress ? 'live' : (s === 'waiting' ? 'waiting' : 'ended');
+    var label = r.inProgress ? 'playing' : s === 'waiting' ? 'lobby' : s;
+    return el('span', 'badge ' + cls, label + (r.awaitingNextRound ? ' · next round soon' : ''));
+  }
+
+  function seatsText(r) {
+    if (r.seats && r.seats.length) {
+      return r.seats.map(function (s) { return s.name + (s.isBot ? ' 🤖' : '') + (s.connected ? '' : ' (offline)'); }).join(', ');
+    }
+    return r.playerCount + '/' + r.maxPlayers;
   }
 
   function renderRooms(body) {
@@ -360,142 +672,1077 @@
     tbody.innerHTML = '';
     var rooms = (body && body.rooms) || [];
     if (!rooms.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty">no active rooms</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">no active rooms</td></tr>';
       return;
     }
     rooms.forEach(function (r) {
       var tr = document.createElement('tr');
       tr.className = 'room-row' + (r.roomId === selectedRoomId ? ' selected' : '');
-      var wells = (r.deadPileCounts || []).join('/');
+      tr.dataset.roomId = r.roomId;
+      var wells = (r.deadPileCounts || []).join(' / ');
+      var turnSeat = (r.seats || []).find(function (s) { return s.seat === r.currentTurn; });
       var cells = [
-        (r.name || r.roomId),
-        String(r.status || '') + (r.awaitingNextRound ? ' (next round)' : ''),
-        r.playerCount + '/' + r.maxPlayers + ' (' + r.humanCount + 'h ' + r.botCount + 'b)',
-        r.cardsDealt ? ('seat ' + r.currentTurn) : '—',
+        { text: r.name || r.roomId, cls: 'id' },
+        statusBadge(r),
+        seatsText(r) + '  (' + r.playerCount + '/' + r.maxPlayers + ')',
+        r.cardsDealt ? (turnSeat ? turnSeat.name : 'seat ' + r.currentTurn) : '—',
         r.deckCount == null ? '—' : String(r.deckCount),
         wells || '—',
       ];
       cells.forEach(function (c) {
         var td = document.createElement('td');
-        td.textContent = c;
+        if (typeof c === 'string') td.textContent = c;
+        else if (c && c.text != null) { td.textContent = c.text; td.className = c.cls; }
+        else td.appendChild(c);
         tr.appendChild(td);
       });
+      var act = el('td', 'actions');
+      var logsBtn = el('button', 'small ghost', 'story');
+      logsBtn.title = 'read what happened in this game';
+      logsBtn.onclick = function (ev) {
+        ev.stopPropagation();
+        selectRoom(r.roomId);
+        showTab('logs');
+        gameLogs.open(r.roomId);
+      };
+      act.appendChild(logsBtn);
+      tr.appendChild(act);
       tr.onclick = function () {
-        selectedRoomId = r.roomId;
-        $('detail-panel').style.display = '';
-        renderRooms(body); // repaint selection
-        loadDetail();
+        selectRoom(r.roomId);
+        showTab('detail');
+        gameLogs.open(r.roomId, { quiet: true });
       };
       tbody.appendChild(tr);
     });
   }
 
-  function loadDetail() {
-    if (!selectedRoomId) return;
-    api('/dev/api/rooms/' + encodeURIComponent(selectedRoomId)).then(function (d) {
-      if (!d.success) return;
-      $('detail-room-id').textContent = d.roomId;
-      var info = $('detail-info');
-      info.innerHTML = '';
-      var fields = [
-        ['status', d.status],
-        ['ruleset', d.ruleset],
-        ['in progress', d.inProgress],
-        ['cards dealt', d.cardsDealt],
-        ['current turn', d.players && d.currentTurn != null && d.players[d.currentTurn]
-          ? ('seat ' + d.currentTurn + ' · ' + d.players[d.currentTurn].playerName)
-          : (d.currentTurn != null ? 'seat ' + d.currentTurn : '—')],
-        ['turn timer', d.turnTimeLimit ? (d.turnTimeRemaining + 's / ' + d.turnTimeLimit + 's') : 'off'],
-        ['deck', d.deckCount],
-        ['wells', (d.deadPileCounts || []).join('/') + (d.wellsTakenThisRound ? ' (' + d.wellsTakenThisRound + ' taken)' : '')],
-        ['discard top', d.discardPile && d.discardPile.length
-          ? cardLabel(d.discardPile[d.discardPile.length - 1]) + ' (' + d.discardPile.length + ' cards)'
-          : 'empty'],
-        ['team scores', Object.keys(d.teamScores || {}).length
-          ? Object.keys(d.teamScores).map(function (k) { return k + '=' + d.teamScores[k]; }).join('  ')
-          : '—'],
-      ];
-      fields.forEach(function (f) {
-        var k = document.createElement('div'); k.className = 'k'; k.textContent = f[0];
-        var v = document.createElement('div'); v.className = 'v'; v.textContent = String(f[1]);
-        info.appendChild(k); info.appendChild(v);
-      });
+  function selectRoom(roomId) {
+    var changed = roomId !== selectedRoomId;
+    selectedRoomId = roomId;
+    setText($('ws-room-id'), roomId || '—');
+    $('btn-copy-id').disabled = !roomId;
+    document.querySelectorAll('tr.room-row').forEach(function (tr) {
+      tr.classList.toggle('selected', tr.dataset.roomId === roomId);
+    });
+    if (changed) {
+      lastDetail = null;
+      $('board').innerHTML = '';
+      $('tools').innerHTML = '';
+      $('board-note').innerHTML = '';
+      $('detail-empty').textContent = 'loading…';
+    }
+    if (roomId) loadDetail(true);
+    else clearDetail();
+  }
 
-      var wrap = $('players');
-      wrap.innerHTML = '';
-      (d.players || []).forEach(function (p) {
-        wrap.appendChild(playerBlock(p, d));
-      });
+  function clearDetail() {
+    $('detail-empty').style.display = '';
+    $('detail-body').style.display = 'none';
+  }
+
+  // ---- workspace tabs -----------------------------------------------------------
+
+  function showTab(name) {
+    $('tab-detail').classList.toggle('active', name === 'detail');
+    $('tab-logs').classList.toggle('active', name === 'logs');
+    $('pane-detail').classList.toggle('active', name === 'detail');
+    $('pane-logs').classList.toggle('active', name === 'logs');
+    if (name === 'logs') gameLogs.onShown();
+  }
+  $('tab-detail').onclick = function () { showTab('detail'); };
+  $('tab-logs').onclick = function () { showTab('logs'); };
+  $('btn-copy-id').onclick = function () {
+    if (!selectedRoomId) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(selectedRoomId).then(
+        function () { toast('roomId copied'); },
+        function () { toast('copy failed', true); }
+      );
+    } else {
+      window.prompt('roomId', selectedRoomId);
+    }
+  };
+
+  // ---- the table: a 1:1 copy of the mobile board (spectator layout) --------------
+  //
+  // Geometry is the mobile SDK's TableGeometry in Flame world units: the board
+  // is 1080 tall, 852/393 wide (2341.4), origin at the centre. Every element
+  // below is placed from those numbers, then scaled by --u (px per world unit)
+  // on this page. What differs from a real spectator: every hand is face-up.
+
+  var GEO = (function () {
+    var H = 1080, W = 852 / 393 * 1080;
+    return {
+      H: H, W: W,
+      tableHeight: 595, feltTop: -375, feltBottom: 220, tableCenterY: -77.5,
+      meldTopOffset: 20, meldEdgeInset: 36, meldCenterGap: 56, meldBottomInset: 40,
+      northStackY: -464, observedSouthY: 466, northPlateY: -397,
+      plateOffsetX: 215, plateEdgeMargin: 8,
+      bottomStripOffset: 90, stripH: 170, stripCardH: 168, stripCardW: 120, pozSlot: 180, stripGap: 12, discardRightInset: 10,
+      meldCardW: 142.5, meldCardH: 206.15, meldGap: 16, meldCardStep: 112, meldMinStep: 22, meldMinSpacing: 24,
+      backW: 96 * 0.82, backH: 138 * 0.82,
+      avatar: 34, nameSize: 26,
+    };
+  })();
+
+  var board = $('board');
+  var boardU = 0.5; // px per world unit, refreshed on resize
+  function measureBoard() {
+    var h = board.clientHeight || (board.clientWidth * 393 / 852);
+    boardU = h / GEO.H;
+    board.style.setProperty('--u', boardU + 'px');
+  }
+  if (window.ResizeObserver) {
+    new ResizeObserver(function () { measureBoard(); if (lastDetail) renderBoard(lastDetail); }).observe(board);
+  }
+
+  // world → px
+  function X(x) { return (x + GEO.W / 2) * boardU; }
+  function Y(y) { return (y + GEO.H / 2) * boardU; }
+  function px(v) { return (v * boardU) + 'px'; }
+
+  function loadDetail(force) {
+    if (!selectedRoomId) return;
+    if (!force && $('detail-pause').checked) return;
+    var roomId = selectedRoomId;
+    api('/dev/api/rooms/' + encodeURIComponent(roomId)).then(function (d) {
+      if (!d.success || roomId !== selectedRoomId) return;
+      lastDetail = d;
+      $('detail-empty').style.display = 'none';
+      $('detail-body').style.display = '';
+      measureBoard();
+      renderBoard(d);
+      renderTools(d);
     }).catch(function (e) {
-      log('detail ' + selectedRoomId + ': ' + e.message, true);
+      log('table ' + roomId + ': ' + e.message, true);
     });
   }
 
-  function playerBlock(p, room) {
-    var div = document.createElement('div');
-    div.className = 'player';
+  function seatOf(d, idx) {
+    return (d.players || []).find(function (x) { return x.playerIndex === idx; }) || null;
+  }
+  function nameOf(d, idx) {
+    var p = seatOf(d, idx);
+    return p ? p.playerName : ('seat ' + idx);
+  }
+  function initial(p) { return p.isBot ? '🤖' : String(p.playerName || '?').trim().charAt(0).toUpperCase(); }
 
-    var head = document.createElement('div');
-    head.className = 'head';
-    if (room.currentTurn === p.playerIndex && room.inProgress) {
-      var dot = document.createElement('span'); dot.className = 'turn-dot'; dot.title = 'current turn';
-      head.appendChild(dot);
+  var COURT = { J: 'jack', Q: 'queen', K: 'king' };
+
+  // A board card at world size w×h (already scaled), top-left at world (x, y),
+  // optional rotation (deg) about its centre.
+  function boardCard(c, x, y, w, h, opts) {
+    opts = opts || {};
+    var d = el('div', 'pc' + (isJoker(c) ? ' joker' : RED[c.suit] ? ' red' : '') + (opts.cls ? ' ' + opts.cls : ''));
+    d.style.left = X(x) + 'px'; d.style.top = Y(y) + 'px';
+    d.style.width = px(w); d.style.height = px(h);
+    d.style.setProperty('--ch', px(h));
+    if (opts.rot) d.style.transform = 'rotate(' + opts.rot + 'deg)';
+    if (opts.z != null) d.style.zIndex = opts.z;
+    var rank = isJoker(c) ? 'JOKER' : String(c.rank);
+    d.appendChild(el('span', 'ix' + (rank.length > 1 && !isJoker(c) ? ' wide' : ''), rank));
+    if (isJoker(c)) {
+      var jimg = document.createElement('img'); jimg.className = 'court'; jimg.src = '/dev/assets/court/joker.png'; jimg.alt = '';
+      d.appendChild(jimg);
+    } else {
+      d.appendChild(el('span', 'ixs', SUITS[c.suit] || '?'));
+      d.appendChild(el('span', 'ixb', SUITS[c.suit] || '?'));
+      if (COURT[rank]) {
+        var img = document.createElement('img'); img.className = 'court';
+        img.src = '/dev/assets/court/' + COURT[rank] + '_' + c.suit + '.png'; img.alt = '';
+        d.appendChild(img);
+      } else if (rank === 'A') {
+        d.appendChild(el('span', 'pip', SUITS[c.suit] || '?'));
+      } else {
+        var pip = el('span', 'pip n');
+        pip.appendChild(el('span', null, SUITS[c.suit] || '?'));
+        pip.appendChild(el('small', null, rank));
+        d.appendChild(pip);
+      }
     }
-    var name = document.createElement('span');
-    name.className = 'name';
-    name.textContent = '#' + p.playerIndex + '  ' + p.playerName + (p.isBot ? ' 🤖' : '');
-    var pid = document.createElement('span');
-    pid.className = 'pid';
-    pid.textContent = p.playerId + (p.isConnected ? '' : ' · disconnected');
-    var count = document.createElement('span');
-    count.className = 'hint';
-    count.textContent = p.hand.length + ' cards · ' + p.meldGroups + ' melds';
-    head.appendChild(name); head.appendChild(pid); head.appendChild(count);
-    div.appendChild(head);
-
-    div.appendChild(cardsBlock(p.hand));
-
-    var form = document.createElement('div');
-    form.className = 'change-form';
-    var input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = 'e.g. AH AH 2H 3H 4H JK';
-    var btn = document.createElement('button');
-    btn.className = 'small primary';
-    btn.textContent = 'Replace hand';
-    btn.onclick = function () {
-      var parsed = parseCardSpec(input.value);
-      if (parsed.error) { toast('Card spec: ' + parsed.error, true); return; }
-      var payload = {
-        roomId: selectedRoomId,
-        target_user: p.playerId,
-        change_cards: parsed.cards,
-      };
-      api('/webhooks/dev-change-cards', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-webhook-secret': secret },
-        body: JSON.stringify(payload),
-      }).then(function (result) {
-        if (!result.success) {
-          toast('Rejected: ' + result.error, true);
-          log('change_cards ' + p.playerName + ': ' + result.error, true);
-        } else {
-          toast('Hand of ' + p.playerName + ' replaced (' + result.hand.length + ' cards).');
-          log('change_cards ' + p.playerName + ' ← ' +
-            result.hand.map(cardLabel).join(' '));
-        }
-        loadDetail();
-      }).catch(function (e) {
-        toast('Change failed: ' + e.message, true);
-        log('change_cards ' + p.playerName + ': ' + e.message, true);
-      });
-    };
-    form.appendChild(input); form.appendChild(btn);
-    div.appendChild(form);
-    return div;
+    d.title = cardLabel(c) + (c.cardId != null ? ' · id ' + c.cardId : '');
+    return d;
   }
 
-  // ---- polling --------------------------------------------------------------
+  function badge(x, y, dia, text, fontPx) {
+    var b = el('div', 'cntbadge', String(text));
+    b.style.left = (X(x) - dia * boardU / 2) + 'px'; b.style.top = (Y(y) - dia * boardU / 2) + 'px';
+    b.style.width = px(dia); b.style.height = px(dia); b.style.fontSize = px(fontPx);
+    b.style.zIndex = 40;
+    return b;
+  }
+
+  // Nameplate: avatar (34) + name (26) below, anchored centerLeft/centerRight
+  // at (x, y) like SeatPlatePlacement. Active turn → the avatar is the clock.
+  function plate(p, x, y, anchor, room, isTurn) {
+    var w = el('div', 'plate');
+    var av = el('div', 'av' + (p.isBot ? ' bot' : '') + (isTurn ? ' clock' : ''));
+    av.style.width = px(GEO.avatar); av.style.height = px(GEO.avatar); av.style.fontSize = px(GEO.avatar * 0.5);
+    if (isTurn) {
+      var left = Math.max(0, Number(room.turnTimeRemaining) || 0);
+      var frac = room.turnTimeLimit ? Math.max(0, Math.min(1, left / room.turnTimeLimit)) : 1;
+      var ring = el('div', 'ring');
+      var pct = Math.round(frac * 100);
+      ring.style.background = 'conic-gradient(' + (room.turnTimeLimit && left <= 5 ? '#E53935' : '#2F8FE0') + ' 0 ' + pct + '%, rgba(16,24,40,.2) ' + pct + '% 100%)';
+      av.appendChild(ring);
+      av.appendChild(el('span', null, room.turnTimeLimit ? String(left) : '▶'));
+      av.style.fontSize = px(GEO.avatar * 0.42);
+    } else {
+      av.appendChild(el('span', null, initial(p)));
+    }
+    w.appendChild(av);
+    var nm = el('div', 'nm' + (p.isConnected ? '' : ' off'), p.playerName + (p.isBot ? ' 🤖' : ''));
+    nm.style.fontSize = px(GEO.nameSize);
+    w.appendChild(nm);
+    var plateW = GEO.avatar + 160;
+    w.style.width = px(plateW);
+    w.style.top = (Y(y) - (GEO.avatar + 2 + GEO.nameSize) * boardU / 2) + 'px';
+    if (anchor === 'right') { w.style.left = (X(x) - plateW * boardU) + 'px'; w.style.alignItems = 'flex-end'; }
+    else if (anchor === 'center') { w.style.left = (X(x) - plateW * boardU / 2) + 'px'; }
+    else { w.style.left = X(x) + 'px'; w.style.alignItems = 'flex-start'; }
+    if (!p.isConnected) w.title = 'offline';
+    return w;
+  }
+
+  // Horizontal face-up row for North/South, cards w×h. The mobile centres a
+  // narrow back stack at x=0 with the plate at +215; a face-up row needs more
+  // width to stay readable, so it grows LEFT and ends where the plate starts.
+  function handRow(cards, cx, cy, w, h, markIds) {
+    var out = [];
+    var n = cards.length;
+    if (!n) return out;
+    var maxW = 760;
+    var step = n > 1 ? Math.min(w * 0.78, (maxW - w) / (n - 1)) : 0;
+    var total = w + step * (n - 1);
+    var rightEdge = GEO.plateOffsetX - 20;
+    if (cx + total / 2 > rightEdge) cx = rightEdge - total / 2;
+    var marks = {};
+    (markIds || []).forEach(function (id) { marks[String(id)] = 1; });
+    cards.forEach(function (c, i) {
+      var x = cx - total / 2 + i * step;
+      var cls = (c.cardId != null && marks[String(c.cardId)]) ? 'restrict' : '';
+      out.push(boardCard(c, x, cy - h / 2, w, h, { cls: cls, z: 10 + i }));
+    });
+    return out;
+  }
+
+  // Vertical face-up column for East/West at centre (cx, cy): the mobile lays
+  // these as a rotated row, so each card is rotated ±90° and stepped along y.
+  function handColumn(cards, cx, cy, w, h, rot) {
+    var out = [];
+    var n = cards.length;
+    if (!n) return out;
+    var maxLen = 560;
+    var step = n > 1 ? Math.min(w * 0.78, (maxLen - w) / (n - 1)) : 0;
+    var total = w + step * (n - 1);
+    cards.forEach(function (c, i) {
+      var y = cy - total / 2 + i * step;
+      out.push(boardCard(c, cx - w / 2, y + w / 2 - h / 2, w, h, { rot: rot, z: 10 + i }));
+    });
+    return out;
+  }
+
+  // Meld zone (MeldAreaComponent): columns packed from the anchored edge,
+  // cards stepped vertically by 112 and compressed once they no longer fit.
+  function meldZone(melds, zoneLeft, zoneTop, zoneW, zoneH, rightAligned) {
+    var out = [];
+    var cw = GEO.meldCardW, chh = GEO.meldCardH;
+    var n = melds.length;
+    if (!n) return out;
+    var comfortable = cw + GEO.meldGap;
+    var packed = (n - 1) * comfortable + cw;
+    var spacing = packed <= zoneW ? comfortable : Math.max(GEO.meldMinSpacing, Math.min(comfortable, (zoneW - cw) / (n - 1)));
+    melds.forEach(function (m, i) {
+      var cards = m.cards || [];
+      var colX = rightAligned ? zoneLeft + zoneW - cw - i * spacing : zoneLeft + i * spacing;
+      var gap = cards.length > 1 ? Math.min(GEO.meldCardStep, Math.max(GEO.meldMinStep, (zoneH - chh) / (cards.length - 1))) : GEO.meldCardStep;
+      cards.forEach(function (c, j) {
+        out.push(boardCard(c, colX, zoneTop + j * gap, cw, chh, { z: 20 + i * 20 + j }));
+      });
+      if (m.isBuraco) {
+        var b = el('div', 'badgeburaco', 'BURACO' + (m.grade && m.grade !== 'clean' ? ' ' + m.grade : ''));
+        b.style.left = X(colX) + 'px'; b.style.top = (Y(zoneTop + (cards.length - 1) * gap + chh) - 10 * boardU) + 'px';
+        b.style.zIndex = 60;
+        out.push(b);
+      }
+    });
+    return out;
+  }
+
+  function renderBoard(d) {
+    board.innerHTML = '';
+    var n = (d.players || []).length;
+    var four = n > 2 || d.maxPlayers > 2;
+    var sideBand = four ? 320 : 80;
+    var tableW = GEO.W - sideBand;
+    var feltL = -tableW / 2, feltR = tableW / 2;
+    var meldW = tableW / 2 - GEO.meldEdgeInset - GEO.meldCenterGap / 2;
+    var meldH = Math.max(360, GEO.tableHeight - GEO.meldTopOffset - GEO.meldBottomInset);
+    var meldTop = GEO.feltTop + GEO.meldTopOffset;
+
+    // felt
+    var felt = el('div', 'felt');
+    felt.style.left = X(feltL) + 'px'; felt.style.top = Y(GEO.feltTop) + 'px';
+    felt.style.width = px(tableW); felt.style.height = px(GEO.tableHeight);
+    var div = el('div', 'divider');
+    div.style.top = px(24); div.style.bottom = px(24);
+    felt.appendChild(div);
+    board.appendChild(felt);
+
+    if (!d.cardsDealt) {
+      board.appendChild(el('div', 'empty-board', d.status === 'waiting' ? 'Lobby — cards not dealt yet' : (d.awaitingNextRound ? 'Between rounds — next deal soon' : 'No cards on the table')));
+    }
+
+    // meld zones: team A (even seats) left, team B (odd seats) right
+    var teamMelds = { A: [], B: [] };
+    (d.players || []).forEach(function (p) {
+      var key = p.playerIndex % 2 === 0 ? 'A' : 'B';
+      (p.melds || []).forEach(function (m) { teamMelds[key].push(m); });
+    });
+    meldZone(teamMelds.A, feltL + GEO.meldEdgeInset, meldTop, meldW, meldH, false).forEach(function (e) { board.appendChild(e); });
+    meldZone(teamMelds.B, feltR - GEO.meldEdgeInset - meldW, meldTop, meldW, meldH, true).forEach(function (e) { board.appendChild(e); });
+
+    // bottom strip: [pozzetto "+"] [deck] [discard box]
+    var stripY = GEO.feltBottom + GEO.bottomStripOffset;
+    var pozCX = feltL + GEO.pozSlot / 2;
+    var deckCX = feltL + GEO.pozSlot + GEO.stripGap + GEO.stripCardW / 2;
+    var discardLeft = deckCX + GEO.stripCardW / 2 + GEO.stripGap;
+    var discardW = (tableW / 2 - GEO.discardRightInset) - discardLeft;
+
+    var box = el('div', 'discardbox');
+    box.style.left = X(discardLeft) + 'px'; box.style.top = Y(stripY - GEO.stripH / 2 + 14) + 'px';
+    box.style.width = px(discardW); box.style.height = px(GEO.stripH - 28);
+    board.appendChild(box);
+
+    var piles = d.deadPiles || [];
+    piles.forEach(function (pile, i) {
+      var w = el('div', 'well' + (pile.length ? '' : ' taken'));
+      w.style.left = (X(pozCX) - GEO.stripCardW * boardU / 2) + 'px'; w.style.top = (Y(stripY) - GEO.stripCardH * boardU / 2) + 'px';
+      w.style.width = px(GEO.stripCardW); w.style.height = px(GEO.stripCardH);
+      if (i === 0) w.style.transform = 'rotate(90deg)';
+      w.style.zIndex = 5 + i;
+      w.title = 'well ' + (i + 1) + ': ' + (pile.length ? pile.length + ' cards' : 'taken');
+      board.appendChild(w);
+      if (pile.length) board.appendChild(badge(pozCX + (i === 0 ? -34 : 34), stripY + (i === 0 ? -34 : 34), 44, pile.length, 20));
+    });
+
+    var deck = el('div', 'deckback');
+    deck.style.left = (X(deckCX) - GEO.stripCardW * boardU / 2) + 'px'; deck.style.top = (Y(stripY) - GEO.stripCardH * boardU / 2) + 'px';
+    deck.style.width = px(GEO.stripCardW); deck.style.height = px(GEO.stripCardH);
+    deck.title = 'deck: ' + d.deckCount + (d.deck && d.deck.length ? ' · next ' + cardLabel(d.deck[0]) : '');
+    if (!d.deckCount) deck.style.opacity = '.25';
+    board.appendChild(deck);
+    board.appendChild(badge(deckCX + GEO.stripCardW / 2 - 8, stripY + GEO.stripCardH / 2 - 8, 48, d.deckCount || 0, 22));
+
+    // discard fan inside the box (padding 24), newest on the right, top outlined
+    var pile = d.discardPile || [];
+    var lockIds = [];
+    (d.players || []).forEach(function (p) { if (p.discardLock && p.discardLock.cardIds) lockIds = lockIds.concat(p.discardLock.cardIds); });
+    if (pile.length) {
+      var avail = discardW - 48;
+      var step = pile.length > 1 ? Math.min(60, (avail - GEO.stripCardW) / (pile.length - 1)) : 0;
+      var total = GEO.stripCardW + step * (pile.length - 1);
+      var startX = discardLeft + 24 + Math.max(0, (avail - total) / 2);
+      pile.forEach(function (c, i) {
+        var cls = (i === pile.length - 1 ? 'top' : '') + (c.cardId != null && lockIds.indexOf(c.cardId) !== -1 ? ' lock' : '');
+        board.appendChild(boardCard(c, startX + i * step, stripY - GEO.stripCardH / 2, GEO.stripCardW, GEO.stripCardH, { cls: cls.trim(), z: 10 + i }));
+      });
+    }
+
+    // seats: 0 south, 1 north (1v1) / east (2v2), 2 north, 3 west
+    var restrict = d.drawnCardRestriction || [];
+    (d.players || []).forEach(function (p) {
+      var isTurn = !!d.inProgress && d.currentTurn === p.playerIndex;
+      var marks = isTurn ? restrict : [];
+      var seatPos = p.playerIndex === 0 ? 'south' : (!four ? 'north' : (p.playerIndex === 1 ? 'east' : p.playerIndex === 2 ? 'north' : 'west'));
+      var nodes = [];
+      if (seatPos === 'south') {
+        nodes = handRow(p.hand, 0, GEO.observedSouthY, GEO.backW, GEO.backH, marks);
+        nodes.push(plate(p, GEO.plateOffsetX, GEO.observedSouthY, 'left', d, isTurn));
+      } else if (seatPos === 'north') {
+        nodes = handRow(p.hand, 0, GEO.northStackY, GEO.backW, GEO.backH, marks);
+        nodes.push(plate(p, GEO.plateOffsetX, GEO.northPlateY, 'left', d, isTurn));
+      } else if (seatPos === 'east') {
+        var ex = Math.min(tableW / 2 + 63, GEO.W / 2 - 35);
+        nodes = handColumn(p.hand, ex, GEO.tableCenterY, GEO.backW, GEO.backH, 90);
+        nodes.push(plate(p, GEO.W / 2 - GEO.plateEdgeMargin, GEO.feltBottom + 70, 'right', d, isTurn));
+      } else {
+        var wx = Math.max(-tableW / 2 - 63, -GEO.W / 2 + 35);
+        nodes = handColumn(p.hand, wx, GEO.tableCenterY, GEO.backW, GEO.backH, -90);
+        nodes.push(plate(p, -GEO.W / 2 + GEO.plateEdgeMargin, GEO.feltBottom + 70, 'left', d, isTurn));
+      }
+      nodes.forEach(function (e) { board.appendChild(e); });
+    });
+
+    // HUD — top-left: timer chip, then the "A VS B" header (logical px: 6 top /
+    // 8 side at the design size). The mobile centres the VS pill over the North
+    // back stack; here that stack is face-up, so the pill sits left of it.
+    var lp = boardU * 1080 / 393; // px per logical px
+    var topPad = 6 * lp, sidePad = 8 * lp;
+    var hudLeft = el('div', 'hud'); hudLeft.style.left = sidePad + 'px'; hudLeft.style.top = topPad + 'px';
+    if (d.inProgress && d.turnTimeLimit) {
+      var left = Math.max(0, Number(d.turnTimeRemaining) || 0);
+      var g = el('div', 'glass');
+      g.appendChild(el('span', 'timer ' + (left > 10 ? 'ok' : left > 5 ? 'warn' : 'crit'), '⏱ ' + left + 's'));
+      hudLeft.appendChild(g);
+    }
+    var vs = el('div', 'vs');
+    var sorted = (d.players || []).slice().sort(function (a, b) { return a.playerIndex - b.playerIndex; });
+    var evens = sorted.filter(function (p) { return p.playerIndex % 2 === 0; });
+    var odds = sorted.filter(function (p) { return p.playerIndex % 2 === 1; });
+    var mini = function (p) {
+      var m = el('span', 'mini');
+      m.appendChild(el('span', 'av' + (p.isBot ? ' bot' : ''), initial(p)));
+      m.appendChild(el('span', null, p.playerName + (p.isBot ? ' 🤖' : '')));
+      return m;
+    };
+    evens.forEach(function (p) { vs.appendChild(mini(p)); });
+    vs.appendChild(el('span', 'v', 'VS'));
+    odds.forEach(function (p) { vs.appendChild(mini(p)); });
+    hudLeft.appendChild(vs);
+    board.appendChild(hudLeft);
+
+    // HUD — top-right: viewers + score chips (+ match progress)
+    var right = el('div', 'hud'); right.style.right = sidePad + 'px'; right.style.top = topPad + 'px'; right.style.flexDirection = 'column'; right.style.alignItems = 'flex-end';
+    var row = el('div', 'hud'); row.style.position = 'static';
+    var viewers = el('div', 'glass'); viewers.appendChild(el('span', null, '👁')); viewers.appendChild(el('span', 'num', String(d.spectatorCount || 0)));
+    row.appendChild(viewers);
+    var sides = four
+      ? [{ label: 'teamA', seats: evens }, { label: 'teamB', seats: odds }]
+      : sorted.map(function (p) { return { label: p.team, seats: [p] }; });
+    sides.forEach(function (side) {
+      if (!side.seats.length) return;
+      var chip = el('div', 'chip' + (d.inProgress && side.seats.some(function (p) { return p.playerIndex === d.currentTurn; }) ? ' turn' : ''));
+      var p0 = side.seats[0];
+      chip.appendChild(el('span', 'av' + (p0.isBot ? ' bot' : ''), initial(p0)));
+      var col = el('span', 'col');
+      col.appendChild(el('div', 'n', side.seats.map(function (p) { return p.playerName; }).join(' & ')));
+      var ts = d.teamScores || {};
+      var score = four ? (ts[side.label] != null ? ts[side.label] : 0) : (p0.score != null ? p0.score : (ts[p0.team] || 0));
+      col.appendChild(el('div', 's', String(score)));
+      chip.appendChild(col);
+      row.appendChild(chip);
+    });
+    right.appendChild(row);
+    if (d.targetScore) {
+      var prog = el('div', 'glass'); prog.style.padding = '4px 10px'; prog.style.marginTop = '4px';
+      var tsc = d.teamScores || {};
+      prog.appendChild(el('span', 'num', '🏆 A ' + (tsc.teamA || 0) + ' · B ' + (tsc.teamB || 0) + ' / ' + d.targetScore));
+      right.appendChild(prog);
+    }
+    board.appendChild(right);
+
+    // note line under the board
+    var noteEl = $('board-note');
+    noteEl.innerHTML = '';
+    var add = function (label, value) {
+      var sp = el('span'); sp.appendChild(txt(label + ' ')); sp.appendChild(el('b', null, String(value))); noteEl.appendChild(sp);
+    };
+    add('Round', (d.roundNumber || 1) + (d.targetScore ? ' · playing to ' + d.targetScore : ' · single round') + ' · ' + (d.ruleset || ''));
+    if (d.inProgress && d.currentTurn != null) {
+      add('Turn:', nameOf(d, d.currentTurn) + ' — ' + (d.hasDrawnCard ? 'has drawn' : "hasn't drawn yet") + (d.meldedThisTurn ? ', has melded' : '') + (d.mustMeldCard ? ', must meld ' + cardLabel(d.mustMeldCard) : ''));
+    } else if (d.awaitingNextRound) {
+      add('Status:', 'between rounds');
+    } else {
+      add('Status:', d.status === 'waiting' ? 'lobby' : String(d.status));
+    }
+    if (d.lastRound && d.lastRound.winnerIndex != null) {
+      add('Last round:', nameOf(d, d.lastRound.winnerIndex) + ' went out' + (d.lastRound.batidaType ? ' (' + d.lastRound.batidaType + ')' : ''));
+    }
+    (d.players || []).forEach(function (p) {
+      if (p.discardLock) add('🔒 ' + p.playerName + ':', 'may not throw ' + cardLabel(p.discardLock) + ' back for ' + plural(p.discardLock.turnsLeft, 'more turn'));
+    });
+    var lg = el('span', 'hint');
+    var dot = function (color, label) { var i = el('i', 'legend-dot'); i.style.background = color; lg.appendChild(i); lg.appendChild(txt(label + '   ')); };
+    dot('#2F8FE0', 'top of the discard pile');
+    dot('#F5C451', 'locked (anti ping-pong)');
+    dot('#FF7043', 'taken this turn — must be melded before discarding');
+    noteEl.appendChild(lg);
+  }
+
+  // ---- tools under the board (give a hand, peek deck/wells) -----------------------
+  //
+  // Keyed by playerId and patched in place, so the input, its preview and the
+  // open/closed state survive every 2s refresh.
+
+  function renderTools(d) {
+    var wrap = $('tools');
+    var seen = {};
+    (d.players || []).slice().sort(function (a, b) { return a.playerIndex - b.playerIndex; }).forEach(function (p) {
+      var pid = String(p.playerId);
+      seen[pid] = true;
+      var card = null;
+      var all = wrap.querySelectorAll('.tool-card[data-pid]');
+      for (var i = 0; i < all.length; i++) { if (all[i].dataset.pid === pid) { card = all[i]; break; } }
+      if (!card) { card = toolCard(p); wrap.appendChild(card); }
+      setText(card.querySelector('.th .sub'), 'seat ' + p.playerIndex + ' · ' + plural(p.hand.length, 'card') + ' · ' + plural(p.meldGroups, 'meld') + (p.isConnected ? '' : ' · offline'));
+      if (typeof card._refreshPreview === 'function') card._refreshPreview();
+    });
+    Array.prototype.slice.call(wrap.querySelectorAll('.tool-card[data-pid]')).forEach(function (c) { if (!seen[c.dataset.pid]) wrap.removeChild(c); });
+
+    var peek = wrap.querySelector('.tool-card[data-peek]');
+    if (!peek) {
+      peek = el('div', 'tool-card'); peek.dataset.peek = '1';
+      var th = el('div', 'th'); th.appendChild(txt('Deck & wells')); th.appendChild(el('span', 'sub'));
+      peek.appendChild(th);
+      peek.appendChild(el('div', 'lbl', 'deck, next draw first'));
+      peek.appendChild(el('div', 'fan deck'));
+      wrap.appendChild(peek);
+    }
+    setText(peek.querySelector('.th .sub'), plural(d.deckCount || 0, 'card') + ' in the deck · wells ' + (d.deadPileCounts || []).join(' / '));
+    fillFan(peek.querySelector('.fan.deck'), d.deck || [], { size: 'xs', emptyText: 'empty' });
+    (d.deadPiles || []).forEach(function (pile, i) {
+      var f = peek.querySelector('.fan.well[data-well="' + i + '"]');
+      if (!f) {
+        peek.appendChild(el('div', 'lbl', 'well ' + (i + 1)));
+        f = el('div', 'fan well'); f.dataset.well = i; peek.appendChild(f);
+      }
+      fillFan(f, pile, { size: 'xs', emptyText: 'taken' });
+    });
+  }
+
+  function toolCard(p) {
+    var card = el('div', 'tool-card');
+    card.dataset.pid = String(p.playerId);
+    var th = el('div', 'th');
+    th.appendChild(txt('Give ' + p.playerName + ' a different hand'));
+    th.appendChild(el('span', 'sub'));
+    card.appendChild(th);
+    var how = el('div', 'how');
+    how.appendChild(txt('e.g. '));
+    how.appendChild(el('b', null, 'AH 2S 10C JK'));
+    how.appendChild(txt(' (JK = joker). Whole hand replaced in that order; old cards go under the deck. Cards only come from the '));
+    how.appendChild(el('b', null, 'deck'));
+    how.appendChild(txt(', a '));
+    how.appendChild(el('b', null, 'well'));
+    how.appendChild(txt(' or this hand — never from another player, the table or the discard pile.'));
+    card.appendChild(how);
+    var form = el('div', 'change-form');
+    var input = document.createElement('input');
+    input.type = 'text'; input.placeholder = 'AH 2S 10C JK …'; input.autocomplete = 'off'; input.spellcheck = false;
+    var btn = el('button', 'small primary', 'Replace hand'); btn.disabled = true;
+    var clear = el('button', 'small ghost', 'clear');
+    form.appendChild(input); form.appendChild(btn); form.appendChild(clear);
+    card.appendChild(form);
+    var preview = el('div', 'preview');
+    card.appendChild(preview);
+
+    function refreshPreview() {
+      var text = input.value.trim();
+      preview.innerHTML = '';
+      input.classList.remove('bad');
+      if (!text) { btn.disabled = true; return; }
+      var parsed = parseCardSpec(text);
+      if (parsed.error) {
+        btn.disabled = true; input.classList.add('bad');
+        preview.appendChild(el('span', 'err', parsed.error));
+        return;
+      }
+      var avail = checkAvailability(parsed.cards, lastDetail, p.playerId);
+      var fan = el('div', 'fan');
+      var counts = { deck: 0, hand: 0, well: 0, none: 0 };
+      var problems = [];
+      parsed.cards.forEach(function (c, i) {
+        var a = avail ? avail[i] : null;
+        var src = a ? (a.src || 'none') : '';
+        if (a) counts[src] += 1;
+        fan.appendChild(cardFace(c, 'sm ghost' + (src ? ' src-' + src : '')));
+        if (a && !a.src) problems.push(cardLabel(c) + ' is ' + a.where[0]);
+      });
+      preview.appendChild(fan);
+      var legend = el('span', 'legend');
+      legend.appendChild(txt(plural(parsed.cards.length, 'card')));
+      if (avail) {
+        legend.appendChild(el('i', 'deck')); legend.appendChild(txt(counts.deck + ' from the deck'));
+        legend.appendChild(el('i', 'well')); legend.appendChild(txt(counts.well + ' from a well'));
+        legend.appendChild(el('i', 'hand')); legend.appendChild(txt(counts.hand + ' already held'));
+        if (counts.none) { legend.appendChild(el('i', 'none')); legend.appendChild(txt(counts.none + ' not available')); }
+      }
+      preview.appendChild(legend);
+      if (problems.length) {
+        btn.disabled = true; input.classList.add('bad');
+        var grouped = [], seenP = {};
+        problems.forEach(function (pr) {
+          if (seenP[pr] == null) { seenP[pr] = grouped.length; grouped.push({ text: pr, n: 1 }); } else grouped[seenP[pr]].n += 1;
+        });
+        preview.appendChild(el('span', 'err', "Can't do that: " + grouped.map(function (g) { return g.text + (g.n > 1 ? ' (×' + g.n + ')' : ''); }).join('; ')));
+      } else {
+        btn.disabled = false;
+      }
+    }
+    card._refreshPreview = function () { if (input.value.trim()) refreshPreview(); };
+
+    function submit() {
+      var parsed = parseCardSpec(input.value);
+      if (parsed.error) { toast(parsed.error, true); return; }
+      btn.disabled = true;
+      postJson('/webhooks/dev-change-cards', { roomId: selectedRoomId, target_user: p.playerId, change_cards: parsed.cards }).then(function (result) {
+        if (!result.success) {
+          toast('Refused: ' + result.error, true);
+          log('give cards to ' + p.playerName + ': ' + result.error, true);
+          btn.disabled = false;
+        } else {
+          toast(p.playerName + ' now holds ' + result.hand.map(cardLabel).join(' '));
+          log('gave ' + p.playerName + ': ' + result.hand.map(cardLabel).join(' '));
+          input.value = '';
+          refreshPreview();
+        }
+        loadDetail(true);
+      }).catch(function (e) {
+        toast('Failed: ' + e.message, true);
+        log('give cards to ' + p.playerName + ': ' + e.message, true);
+        btn.disabled = false;
+      });
+    }
+    input.addEventListener('input', refreshPreview);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !btn.disabled) submit();
+      if (e.key === 'Escape') { input.value = ''; refreshPreview(); input.blur(); }
+    });
+    btn.onclick = submit;
+    clear.onclick = function () { input.value = ''; refreshPreview(); input.focus(); };
+    return card;
+  }
+
+  // ---- the story (game logs) ------------------------------------------------------
+  //
+  // One game's server log, live-tailed. The server keeps every line it can
+  // attribute to a room for GAME_LOG_RETENTION_MS (>= 2h) after the last line,
+  // so a finished game stays readable here. `since` is a seq cursor: follow
+  // mode only pulls what arrived after the last line we rendered.
+  //
+  // Story mode asks the server for the narrative subset ([GAME] events,
+  // lifecycle events, warn/error) and renders each as a sentence with cards;
+  // Raw mode is every line as logged.
+
+  var gameLogs = (function () {
+    var roomId = null;
+    var since = 0;
+    var timer = null;
+    var loading = false;
+    var listTimer = null;
+    var human = true;
+    var MAX_DOM_LINES = 3000;
+    var names = {}; // playerId -> name, and 'seat:N' -> name, learned from the log itself
+
+    var view = $('logview');
+    var roomSel = $('logs-room');
+    var meta = null;
+
+    function learnNames(e) {
+      var d = e._data;
+      if (d && d.game === 'deal' && Array.isArray(d.seats)) {
+        d.seats.forEach(function (s) {
+          if (s.name) { names[String(s.playerId)] = s.name; names['seat:' + s.seat] = s.name; }
+        });
+      }
+      var m = e.msg.match(/Player (\S+) \(([^)]+)\) joined room/);
+      if (m) names[m[1]] = m[2];
+      if (lastDetail && lastDetail.roomId === roomId) {
+        (lastDetail.players || []).forEach(function (p) {
+          names[String(p.playerId)] = p.playerName;
+          names['seat:' + p.playerIndex] = p.playerName;
+        });
+      }
+    }
+
+    // `suffix` rides inside the <b> so flex gaps never split "Bob" from "'s".
+    function who(d, suffix) {
+      var n = (d.playerId != null && names[String(d.playerId)]) || (d.seat != null && names['seat:' + d.seat]);
+      var b = el('b', null, (n || (d.playerId != null ? String(d.playerId) : 'seat ' + d.seat)) + (suffix || ''));
+      if (n && d.seat != null) b.title = 'seat ' + d.seat + ' · ' + d.playerId;
+      return b;
+    }
+
+    function seatRef(seat, suffix) {
+      var n = names['seat:' + seat];
+      return el('b', null, (n ? n : 'seat ' + seat) + (suffix || ''));
+    }
+    function seatName(seat) { return names['seat:' + seat] || ('seat ' + seat); }
+
+    function cards(list) {
+      var c = el('span', 'fan');
+      (list || []).forEach(function (card) { c.appendChild(cardFace(card, 'xs')); });
+      return c;
+    }
+
+    function scoreText(obj) {
+      if (!obj) return '';
+      return Object.keys(obj).map(function (k) { return teamName(k) + ' ' + obj[k]; }).join(', ');
+    }
+
+    // Returns { icon, cls, parts: [...nodes], divider?: string } for a [GAME] event.
+    function describeGame(d) {
+      var parts = [];
+      var r = { icon: '•', cls: '', parts: parts };
+      switch (d.game) {
+        case 'deal':
+          r.icon = '🃏'; r.cls = 'turn';
+          parts.push(txt('Round ' + (d.round || 1) + ' dealt'));
+          if (Array.isArray(d.seats)) parts.push(txt(' — ' + d.seats.map(function (s) { return (s.name || s.playerId) + ' gets ' + s.cards; }).join(', ')));
+          parts.push(txt(' · ' + d.deck + ' in the deck · wells ' + (d.wells || []).join(' / ')));
+          if (d.firstTurn != null) r.divider = seatName(d.firstTurn) + ' starts';
+          break;
+        case 'draw':
+          r.icon = d.auto ? '⏰' : '🂠';
+          parts.push(who(d)); parts.push(txt(d.auto ? ' timed out — a card was drawn for them: ' : ' drew '));
+          parts.push(cards([d.card]));
+          parts.push(txt(' · ' + d.deck + ' left in the deck · holds ' + d.hand));
+          break;
+        case 'discard':
+          r.icon = d.auto ? '⏰' : '🗑';
+          parts.push(who(d)); parts.push(txt(d.auto ? ' timed out — discarded for them: ' : ' discarded '));
+          parts.push(cards([d.card]));
+          parts.push(txt(' · holds ' + d.hand));
+          if (d.pozzettoTaken) parts.push(txt(' · hand emptied → picked up a well (' + d.pozzettoTaken + ' cards)'));
+          if (d.minimumMeldFailed) parts.push(txt(' · minimum-meld check failed, this turn\'s melds went back'));
+          if (d.meldsReturned) parts.push(txt(' · ' + d.meldsReturned + ' melded card(s) had to be taken back first'));
+          if (d.nextSeat != null) r.divider = seatName(d.nextSeat) + "'s turn";
+          break;
+        case 'meld':
+          r.icon = '🧩';
+          parts.push(who(d)); parts.push(txt(' laid down '));
+          parts.push(cards(d.cards));
+          if (d.isBuraco) parts.push(el('span', 'badge tiny buraco', 'BURACO' + (d.grade ? ' · ' + d.grade : '')));
+          else if (d.grade) parts.push(el('span', 'badge tiny neutral', d.grade));
+          parts.push(txt(' · holds ' + d.hand));
+          if (d.pozzettoTaken) parts.push(txt(' · hand emptied → picked up a well (' + d.pozzettoTaken + ')'));
+          break;
+        case 'go_down':
+          r.icon = '🧩';
+          parts.push(who(d)); parts.push(txt(' went down with ' + plural((d.melds || []).length, 'meld') + ': '));
+          (d.melds || []).forEach(function (m) { parts.push(cards(m)); });
+          parts.push(txt(' · holds ' + d.hand));
+          if (d.pozzettoTaken) parts.push(txt(' · picked up a well (' + d.pozzettoTaken + ')'));
+          break;
+        case 'add_to_meld':
+          r.icon = '➕';
+          parts.push(who(d)); parts.push(txt(' added ')); parts.push(cards(d.cards));
+          parts.push(txt(' to ')); parts.push(seatRef(d.targetSeat, "'s")); parts.push(txt('meld ' + (d.targetMeldIndex + 1) + ' · holds ' + d.hand));
+          if (d.pozzettoTaken) parts.push(txt(' · picked up a well (' + d.pozzettoTaken + ')'));
+          break;
+        case 'take_pile':
+          r.icon = '📥';
+          parts.push(who(d)); parts.push(txt(' picked up the discard pile (' + plural((d.cards || []).length, 'card') + ') '));
+          parts.push(cards(d.cards)); parts.push(txt(' · holds ' + d.hand));
+          break;
+        case 'take_pozzetto':
+          r.icon = '🎁';
+          parts.push(who(d)); parts.push(txt(' took a well (' + plural((d.cards || []).length, 'card') + ') · holds ' + d.hand));
+          break;
+        case 'timeout':
+          r.icon = '⏰'; r.cls = 'WARN';
+          parts.push(who(d)); parts.push(txt('ran out of time' + (d.connected === false ? ' (offline)' : '') + (d.isBot ? ' (bot)' : '')));
+          break;
+        case 'turn_forced':
+          r.icon = '⏭'; r.cls = 'WARN';
+          parts.push(txt('nothing could be discarded — the turn was skipped from ')); parts.push(seatRef(d.fromSeat)); parts.push(txt(' to ')); parts.push(seatRef(d.toSeat));
+          r.divider = seatName(d.toSeat) + "'s turn";
+          break;
+        case 'round_end':
+        case 'match_end':
+          r.icon = d.game === 'match_end' ? '🏆' : '🏁'; r.cls = 'end';
+          parts.push(txt((d.game === 'match_end' ? 'Match over' : 'Round ' + (d.round || '') + ' over') + ' — '));
+          if (d.winnerSeat != null) { parts.push(seatRef(d.winnerSeat)); parts.push(txt(' went out')); }
+          if (d.batida) parts.push(txt(' (' + d.batida + ')'));
+          if (d.teamScores) parts.push(txt(' · this round: ' + scoreText(d.teamScores)));
+          if (d.cumulative) parts.push(txt(' · match: ' + scoreText(d.cumulative) + (d.targetScore ? ' (playing to ' + d.targetScore + ')' : '')));
+          break;
+        case 'disconnect':
+          r.icon = '🔌'; r.cls = 'WARN';
+          parts.push(who(d)); parts.push(txt(' lost connection (' + (d.reason || '?') + ')' + (d.inProgress ? ' mid-game' : '')));
+          break;
+        case 'reconnect':
+          r.icon = '🔄';
+          parts.push(who(d)); parts.push(txt(' is back'));
+          break;
+        case 'leave':
+          r.icon = '🚪';
+          parts.push(who(d)); parts.push(txt(' left the room · ' + plural(d.remaining, 'player') + ' remaining'));
+          break;
+        case 'forfeit':
+          r.icon = '🏳'; r.cls = 'end';
+          parts.push(who(d)); parts.push(txt(' forfeited (' + d.reason + ')'));
+          if (d.winnerSeat != null) { parts.push(txt(' · ')); parts.push(seatRef(d.winnerSeat)); parts.push(txt(' wins')); }
+          break;
+        default:
+          parts.push(txt(d.game + ' ' + JSON.stringify(d)));
+      }
+      return r;
+    }
+
+    var LIFE_TEXT = {
+      room_created: 'room created', room_synced_from_backend: 'room synced from the backend',
+      join_requested: 'asked to join', player_joined: 'joined', spectator_joined: 'joined as a spectator',
+      bot_invited: 'bot invited', bot_joined: 'bot seated', start_triggered_by_webhook: 'backend asked to start',
+      game_started_manual: 'game started by the host', game_started_auto_full_room: 'game started (room full)',
+      next_round_scheduled: 'next round scheduled', next_round_started: 'next round started',
+      next_round_cancelled: 'next round cancelled', next_round_aborted: 'match aborted before the next round',
+      room_cancelled_by_backend: 'room cancelled by the backend', host_heartbeat_kill: 'lobby closed — host stopped responding',
+      start_rejected_incomplete_roster: 'start refused — seats missing', seat_claim_rejected: 'seat claim refused',
+    };
+
+    function humanEl(e) {
+      var d = e._data;
+      var wrap = el('div', 'ev ' + e.level);
+      wrap.appendChild(el('span', 't', fmtTime(e.ts)));
+      var ic = el('span', 'ic', '•');
+      var body = el('span', 'body');
+      wrap.appendChild(ic); wrap.appendChild(body);
+
+      if (d && d.game && e.msg.indexOf('[GAME]') === 0) {
+        var r = describeGame(d);
+        ic.textContent = r.icon;
+        if (r.cls) wrap.classList.add(r.cls);
+        r.parts.forEach(function (n) { body.appendChild(n); });
+        wrap._divider = r.divider || null;
+        return wrap;
+      }
+      if (d && d.event && e.msg.indexOf('[ROOM_LIFECYCLE]') === 0) {
+        wrap.classList.add('life');
+        ic.textContent = '·';
+        var text = LIFE_TEXT[d.event] || String(d.event).replace(/_/g, ' ');
+        if (d.playerId != null) {
+          body.appendChild(el('b', null, names[String(d.playerId)] || String(d.playerId)));
+          body.appendChild(txt(' ' + text));
+        } else {
+          body.appendChild(txt(text));
+        }
+        var bits = [];
+        if (d.playerIndex != null) bits.push('seat ' + d.playerIndex);
+        if (d.reason) bits.push(d.reason);
+        if (d.playerCount != null) bits.push(d.playerCount + '/' + (d.maxPlayers || '?') + ' seated');
+        if (d.delayMs != null) bits.push('in ' + Math.round(d.delayMs / 1000) + 's');
+        if (bits.length) body.appendChild(el('span', 'seat', '— ' + bits.join(' · ')));
+        return wrap;
+      }
+      if (d && d.game == null && e.msg.indexOf('[DEV_CHANGE_CARDS]') === 0) {
+        ic.textContent = '🛠';
+        body.appendChild(txt('an admin gave '));
+        body.appendChild(who(d));
+        body.appendChild(txt(' a new hand (' + plural(d.requested, 'card') + ') · ' + d.deckCount + ' left in the deck'));
+        return wrap;
+      }
+      ic.textContent = e.level === 'ERROR' ? '✖' : e.level === 'WARN' ? '⚠' : '·';
+      var m = e.msg.match(/^\[([^\]]+)\]\s*([\s\S]*)$/);
+      if (m) {
+        body.appendChild(el('span', 'tag', m[1]));
+        body.appendChild(txt(m[2]));
+      } else {
+        body.appendChild(txt(e.msg));
+      }
+      if (e.data && !d) body.appendChild(el('span', 'sub', e.data));
+      return wrap;
+    }
+
+    function rawEl(e, needle) {
+      var div = el('div', 'ln ' + e.level);
+      div.appendChild(el('span', 't', fmtTime(e.ts) + ' '));
+      div.appendChild(el('span', 'lv', e.level));
+      div.appendChild(el('span', 'm', ' ' + e.msg));
+      if (e.data) div.appendChild(el('span', 'd', e.data));
+      if (needle && (e.msg + ' ' + (e.data || '')).toLowerCase().indexOf(needle) !== -1) div.classList.add('hit');
+      return div;
+    }
+
+    function parseEntry(e) {
+      e._data = null;
+      if (e.data) { try { var d = JSON.parse(e.data); if (d && typeof d === 'object') e._data = d; } catch (x) { /* raw */ } }
+      return e;
+    }
+
+    function query() {
+      return { level: $('logs-level').value, q: $('logs-q').value.trim() };
+    }
+
+    function renderMeta() {
+      var parts = [];
+      if (!meta) { $('logs-meta').textContent = ''; return; }
+      parts.push('room ' + meta.roomId + (meta.live ? (meta.roomStatus === 'waiting' ? ' · in the lobby' : ' · playing now') : ' · finished'));
+      if (meta.firstAt) parts.push('from ' + fmtTime(meta.firstAt));
+      if (meta.lastAt) parts.push('to ' + fmtTime(meta.lastAt));
+      parts.push('showing ' + view.querySelectorAll('.ln, .ev').length + ' of ' + meta.total + (human ? ' story lines' : ' lines'));
+      if (meta.dropped) parts.push(meta.dropped + ' oldest lines already dropped');
+      if (meta.restored) parts.push('restored from disk after a restart');
+      $('logs-meta').textContent = parts.join('   ·   ');
+    }
+
+    function atBottom() {
+      return view.scrollHeight - view.scrollTop - view.clientHeight < 40;
+    }
+
+    function append(entries, needle, stickToBottom) {
+      var frag = document.createDocumentFragment();
+      entries.forEach(function (e) {
+        parseEntry(e);
+        learnNames(e);
+        var node = human ? humanEl(e) : rawEl(e, needle);
+        frag.appendChild(node);
+        if (human && node._divider) frag.appendChild(el('div', 'divider', node._divider));
+      });
+      view.appendChild(frag);
+      var lines = view.querySelectorAll('.ln, .ev, .divider');
+      for (var i = 0; i < lines.length - MAX_DOM_LINES; i++) view.removeChild(lines[i]);
+      if (stickToBottom) view.scrollTop = view.scrollHeight;
+    }
+
+    function fetchPage(params) {
+      if (human) params.narrative = 1;
+      var qs = Object.keys(params).filter(function (k) { return params[k] !== '' && params[k] != null; })
+        .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); }).join('&');
+      return api('/dev/api/rooms/' + encodeURIComponent(roomId) + '/logs' + (qs ? '?' + qs : ''));
+    }
+
+    function reload() {
+      if (!roomId || loading) return;
+      loading = true;
+      var q = query();
+      view.innerHTML = '';
+      view.classList.toggle('human', human);
+      view.classList.toggle('raw', !human);
+      since = 0;
+      names = {};
+      fetchPage({ tail: 1, limit: human ? 2000 : 800, level: q.level, q: q.q }).then(function (res) {
+        loading = false;
+        if (!res.success) {
+          meta = null; renderMeta();
+          view.innerHTML = '<div class="empty">' + (res.error || 'no log for this room') + '</div>';
+          $('btn-logs-download').disabled = true;
+          return;
+        }
+        if (!res.entries.length) view.innerHTML = '<div class="empty">nothing matches</div>';
+        append(res.entries, q.q.toLowerCase(), true);
+        since = res.nextSince || 0;
+        meta = res;
+        renderMeta();
+        $('btn-logs-download').disabled = false;
+      }).catch(function (e) {
+        loading = false;
+        view.innerHTML = '<div class="empty">' + e.message + '</div>';
+        meta = null; renderMeta();
+        $('btn-logs-download').disabled = true;
+      });
+    }
+
+    function tick() {
+      if (!roomId || loading || !$('logs-follow').checked || !secret || restarting) return;
+      if (!$('pane-logs').classList.contains('active')) return; // hidden tab: don't burn requests
+      loading = true;
+      var q = query();
+      var stick = atBottom();
+      fetchPage({ since: since, limit: 500, level: q.level, q: q.q }).then(function (res) {
+        loading = false;
+        if (!res.success) return;
+        if (res.entries.length) {
+          var placeholder = view.querySelector('.empty');
+          if (placeholder) view.removeChild(placeholder);
+          append(res.entries, q.q.toLowerCase(), stick);
+          since = res.nextSince;
+        }
+        if (meta && meta.roomId === res.roomId) {
+          meta.live = res.live;
+          meta.roomStatus = res.roomStatus;
+          meta.lastAt = res.lastAt;
+          meta.dropped = res.dropped;
+          meta.total += res.entries.length;
+          renderMeta();
+        }
+      }).catch(function () { loading = false; });
+    }
+
+    function refreshList() {
+      if (!secret) return;
+      api('/dev/api/logs').then(function (res) {
+        var rooms = res.rooms || [];
+        var current = roomSel.value;
+        roomSel.innerHTML = '<option value="">— pick a game (' + rooms.length + ') —</option>';
+        rooms.forEach(function (r) {
+          var opt = document.createElement('option');
+          opt.value = r.roomId;
+          var bits = [r.roomId, r.live ? (r.roomStatus === 'waiting' ? 'lobby' : 'playing') : 'finished'];
+          if (r.count != null) bits.push(plural(r.count, 'line'));
+          if (r.errors) bits.push(plural(r.errors, 'error'));
+          if (r.warns) bits.push(plural(r.warns, 'warning'));
+          if (r.onDisk) bits.push('on disk');
+          bits.push(fmtTime(r.lastAt).slice(0, 8));
+          opt.textContent = bits.join(' · ');
+          roomSel.appendChild(opt);
+        });
+        roomSel.value = roomId || current || '';
+        if (res.retentionMs) {
+          $('logs-retention').textContent = 'kept ' + Math.round(res.retentionMs / 3600000 * 10) / 10 + 'h after the last line';
+        }
+      }).catch(function () { /* transient */ });
+    }
+
+    // opts.quiet: point the tab at the room without switching to it / scrolling.
+    function open(id, opts) {
+      if (!id) return;
+      opts = opts || {};
+      if (String(id) === roomId && opts.quiet) return;
+      roomId = String(id);
+      roomSel.value = roomId;
+      if (roomSel.value !== roomId) refreshList(); // not in the picker yet (fresh game)
+      $('logs-room-manual').value = '';
+      reload();
+      if (!timer) timer = setInterval(tick, 1500);
+      if (!opts.quiet) $('workspace').scrollIntoView({ block: 'start' });
+    }
+
+    function start() {
+      refreshList();
+      if (!listTimer) listTimer = setInterval(refreshList, 5000);
+      if (!timer) timer = setInterval(tick, 1500);
+    }
+
+    function stop() {
+      if (timer) { clearInterval(timer); timer = null; }
+      if (listTimer) { clearInterval(listTimer); listTimer = null; }
+    }
+
+    function setMode(h) {
+      human = h;
+      $('mode-human').classList.toggle('active', h);
+      $('mode-raw').classList.toggle('active', !h);
+      reload();
+    }
+    $('mode-human').onclick = function () { setMode(true); };
+    $('mode-raw').onclick = function () { setMode(false); };
+
+    roomSel.onchange = function () { if (roomSel.value) open(roomSel.value); };
+    $('btn-logs-open').onclick = function () {
+      var v = $('logs-room-manual').value.trim();
+      if (v) open(v);
+    };
+    $('logs-room-manual').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') $('btn-logs-open').click();
+    });
+    $('logs-level').onchange = reload;
+    var qDebounce = null;
+    $('logs-q').addEventListener('input', function () {
+      clearTimeout(qDebounce);
+      qDebounce = setTimeout(reload, 350);
+    });
+    $('btn-logs-reload').onclick = reload;
+    $('btn-logs-download').onclick = function () {
+      if (!roomId) return;
+      var q = query();
+      var params = ['secret=' + encodeURIComponent(secret)];
+      if (q.level) params.push('level=' + encodeURIComponent(q.level));
+      if (q.q) params.push('q=' + encodeURIComponent(q.q));
+      window.open('/dev/api/rooms/' + encodeURIComponent(roomId) + '/logs.txt?' + params.join('&'), '_blank');
+    };
+
+    // The pane was display:none while it loaded, so the "stick to bottom"
+    // scroll had nothing to measure — redo it now that it is visible.
+    function onShown() {
+      if ($('logs-follow').checked) view.scrollTop = view.scrollHeight;
+    }
+
+    return { open: open, start: start, stop: stop, onShown: onShown };
+  })();
+
+  // ---- polling ----------------------------------------------------------------------
 
   function poll() {
     if (!secret || restarting) return;
@@ -504,12 +1751,16 @@
     });
     api('/dev/api/rooms').then(function (body) {
       renderRooms(body);
-      $('rooms-refresh').textContent = '· auto-refresh 2s · ' + new Date().toLocaleTimeString();
+      $('rooms-refresh').textContent = '· refreshes every 2s · ' + new Date().toLocaleTimeString();
       if (selectedRoomId) {
         var still = body.rooms.some(function (r) { return r.roomId === selectedRoomId; });
-        if (!still) { selectedRoomId = null; $('detail-panel').style.display = 'none'; }
+        if (!still) {
+          clearDetail();
+          $('detail-empty').textContent = 'room ' + selectedRoomId + ' is over and has been cleaned up — its story is still in the Story tab';
+        } else {
+          loadDetail(false);
+        }
       }
-      if (selectedRoomId) loadDetail();
     }).catch(function (e) {
       if (e.status === 401) { stopPolling(); }
       log('rooms: ' + e.message, true);
@@ -520,13 +1771,20 @@
     stopPolling();
     poll();
     pollTimer = setInterval(poll, 2000);
+    gameLogs.start();
   }
 
   function stopPolling() {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    gameLogs.stop();
   }
 
-  // ---- ops actions ----------------------------------------------------------
+  $('detail-pause').onchange = function () {
+    if (!this.checked) loadDetail(true);
+    toast(this.checked ? 'Table refresh paused' : 'Table refresh resumed');
+  };
+
+  // ---- ops actions --------------------------------------------------------------------
 
   function opsMessage() {
     var m = $('ops-message').value.trim();
@@ -534,11 +1792,7 @@
   }
 
   function broadcast(payload, label) {
-    return api('/webhooks/development', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-webhook-secret': secret },
-      body: JSON.stringify(payload),
-    }).then(function (result) {
+    return postJson('/webhooks/development', payload).then(function (result) {
       if (!result.success) {
         toast(label + ': ' + result.error, true);
         log(label + ' rejected: ' + result.error, true);
@@ -566,11 +1820,7 @@
     if (!confirm('Broadcast a restart notice and shut the server process down?\n' +
         'It comes back only if a supervisor (pm2/systemd/docker) is running it.')) return;
     restarting = true;
-    api('/webhooks/dev-restart', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-webhook-secret': secret },
-      body: JSON.stringify(Object.assign({ shutdown_after_ms: 3000 }, opsMessage())),
-    }).then(function (result) {
+    postJson('/webhooks/dev-restart', Object.assign({ shutdown_after_ms: 3000 }, opsMessage())).then(function (result) {
       if (!result.success) {
         restarting = false;
         toast('Restart rejected: ' + result.error, true);
@@ -587,7 +1837,7 @@
     });
   };
 
-  // ---- connect --------------------------------------------------------------
+  // ---- connect ------------------------------------------------------------------------
 
   secretInput.value = secret;
   $('btn-save-secret').onclick = function () {
