@@ -573,6 +573,87 @@ describe('SocketHandlers', () => {
     }
   });
 
+  describe('closeRoomFromDev (dev console "Close game")', () => {
+    it('voids a lobby room: room_closed to the table, sockets detached, backend told admin_closed', () => {
+      const service = new GameService();
+      const s1 = createSocketMock('s1');
+      const io = createIoMock([s1]);
+      const handler = new SocketHandlers(io, service);
+      const room = service.createRoom('lobby-close', 2);
+      service.joinRoom('lobby-close', 'p1', 'P1', 's1');
+      const closed = [];
+      // onRoomDeleted passes reason=null; the real notifier reads the stashed
+      // close context — mirror that so the stub sees what the backend would.
+      handler._notifyBackendRoomClosed = function (roomId, reason) {
+        const ctx = this._roomCloseContext.get(String(roomId));
+        closed.push({ roomId, reason: reason || (ctx && ctx.reason) || null });
+      };
+
+      try {
+        const result = handler.closeRoomFromDev({ roomId: 'lobby-close', message: 'Server maintenance' });
+
+        expect(result.success).to.equal(true);
+        expect(result.reason).to.equal('admin_closed');
+        expect(result.wasInProgress).to.equal(false);
+        expect(result.playerCount).to.equal(1);
+        expect(service.getRoom('lobby-close')).to.equal(undefined);
+        const notice = io.roomEmits.find((e) => e.event === SocketEvents.ROOM_CLOSED);
+        expect(notice.roomId).to.equal('lobby-close');
+        expect(notice.payload.reason).to.equal('admin_closed');
+        expect(notice.payload.message).to.equal('Server maintenance');
+        expect(s1.leftRooms).to.include('lobby-close');
+        // onRoomDeleted forwards the stashed reason (not null) to the backend.
+        expect(closed).to.deep.equal([{ roomId: 'lobby-close', reason: 'admin_closed' }]);
+      } finally {
+        cleanupRoom(service, handler, room);
+      }
+    });
+
+    it('voids a dealt game with no result: turn timer stopped, no game.completed, no result webhook', () => {
+      const { service, handler, room, s1, s2, io } = setupStartedRoom();
+      const results = [];
+      const partner = [];
+      handler._notifyBackendGameResult = (r, winnerId) => results.push(winnerId);
+      handler._emitPartnerWebhook = (event) => partner.push(event);
+      handler._notifyBackendRoomClosed = () => {};
+      try {
+        handler.handleStartGame(s1, {});
+        expect(room.isInProgress()).to.equal(true);
+
+        const result = handler.closeRoomFromDev({ roomId: 'auto-deal' });
+
+        expect(result.success).to.equal(true);
+        expect(result.wasInProgress).to.equal(true);
+        expect(result.playerCount).to.equal(2);
+        expect(service.getRoom('auto-deal')).to.equal(undefined);
+        expect(room.turnTimerHandle).to.equal(null);
+        expect(io.roomEmits.some((e) => e.event === SocketEvents.ROOM_CLOSED)).to.equal(true);
+        expect(io.roomEmits.some((e) => e.event === SocketEvents.GAME_ENDED)).to.equal(false);
+        expect(results).to.deep.equal([]);
+        expect(partner).to.not.include('game.completed');
+        expect(s1.leftRooms).to.include('auto-deal');
+        expect(s2.leftRooms).to.include('auto-deal');
+      } finally {
+        cleanupRoom(service, handler, room);
+      }
+    });
+
+    it('is idempotent on a room that is already gone and rejects a missing roomId', () => {
+      const service = new GameService();
+      const io = createIoMock([]);
+      const handler = new SocketHandlers(io, service);
+      try {
+        expect(handler.closeRoomFromDev({})).to.deep.equal({ success: false, error: 'roomId required' });
+        const gone = handler.closeRoomFromDev({ roomId: 'nope' });
+        expect(gone.success).to.equal(true);
+        expect(gone.alreadyClosed).to.equal(true);
+        expect(io.roomEmits).to.deep.equal([]);
+      } finally {
+        cleanupRoom(service, handler, null);
+      }
+    });
+  });
+
   it('uses FailureManager reconnection path for in-progress room with previous socket id', async () => {
     const ioMock = { to: () => ({ emit: () => {} }), sockets: { sockets: new Map() } };
 

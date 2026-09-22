@@ -746,6 +746,42 @@ class BraziliaServer {
         // `dev_change_cards` socket event — see SocketHandlers.changePlayerCards
         // for the full payload contract. Body:
         //   { roomId, target_user, change_cards: [{suit, rank} | {cardId}] }
+        // Dev console "Close game": void a room in ANY phase (lobby, mid-round,
+        // between rounds) with no result. Everyone at the table gets room_closed
+        // (with the optional message), the room is deleted and the backend gets
+        // room-closed { reason: 'admin_closed' } so it de-lists / refunds.
+        // Body: { roomId, message?: string, reason?: string }
+        if (req.method === 'POST' && req.url.startsWith('/webhooks/dev-close-room')) {
+          (async () => {
+            try {
+              if (this.config.security.webhookSecret && req.headers['x-webhook-secret'] !== this.config.security.webhookSecret) {
+                logger.warn('[WEBHOOK] Unauthorized dev-close-room webhook', {
+                  source: 'webhook',
+                  event: 'dev_close_room',
+                  requestId,
+                });
+                sendJson(res, 401, { success: false, error: 'Unauthorized' });
+                return;
+              }
+              const data = await readJsonBody(req);
+              const result = this.socketHandlers.closeRoomFromDev(data);
+              logger.info('[WEBHOOK] dev-close-room processed', {
+                source: 'webhook',
+                event: 'dev_close_room',
+                requestId,
+                roomId: data?.roomId ? String(data.roomId) : null,
+                success: result.success,
+                alreadyClosed: result.alreadyClosed === true,
+              });
+              sendJson(res, result.success ? 200 : 400, result);
+            } catch (error) {
+              logger.error('[WEBHOOK] dev-close-room failed', { requestId, error: error.message });
+              sendJson(res, 500, { success: false, error: 'Internal Server Error' });
+            }
+          })();
+          return;
+        }
+
         // Dev: swap two physical cards between the deck / a well / any hand.
         if (req.method === 'POST' && req.url.startsWith('/webhooks/dev-swap-cards')) {
           (async () => {

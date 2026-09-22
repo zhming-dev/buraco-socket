@@ -935,6 +935,17 @@ class FailureManager extends EventEmitter {
         // hard-disconnected seat (e.g. host swipe-kill) frozen forever.
         const stillInGrace = player.status === 'grace_period';
 
+        // The room was torn down while this seat was in grace (admin close,
+        // maintenance notice, backend cancel, host-gone kill, the seat's owner
+        // sat down elsewhere). Its snapshot was purged with it; persisting the
+        // dead room here would write it straight back, and the next restart
+        // would restore a table nobody can reach. Drop the marker and stop.
+        if (typeof this.gameManager?.getRoom === 'function' && this.gameManager.getRoom(room.roomId) !== room) {
+          this.graceTimers.delete(graceKey);
+          await Promise.resolve(this.redis.del(graceKey)).catch(() => {});
+          return;
+        }
+
         if (stillInGrace) {
           if (!(await this._canMutateRoom(room, 'grace expiry'))) {
             return;

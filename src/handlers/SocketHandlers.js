@@ -93,10 +93,11 @@ class SocketHandlers {
     return 2000;
   }
 
-  // How often the socket tells the backend which rooms are genuinely alive (have
-  // ≥1 connected human). The backend bumps those rooms' updated_at; rooms that
-  // stop heartbeating go stale and become eligible for the age-based reaper. This
-  // liveness signal is what makes the backend's force-detach safe (B2).
+  // How often the socket tells the backend which rooms are genuinely alive (still
+  // seat a human — see _notifyBackendHeartbeat). The backend bumps those rooms'
+  // updated_at; rooms that stop heartbeating go stale and become eligible for the
+  // age-based reaper. This liveness signal is what makes the backend's
+  // force-detach safe (B2).
   static get HEARTBEAT_MS() {
     return 60000;
   }
@@ -2693,7 +2694,12 @@ class SocketHandlers {
       socket.emit(SocketEvents.ERROR, ErrorHandler.createErrorResponse('Could not verify your reserved seat. Please retry.'));
       return;
     }
-    const previousRoom = this.gameService.getPlayerRoom(playerId);
+    let previousRoom = this.gameService.getPlayerRoom(playerId);
+    if (verifiedSeatReservation && !seatBeforeJoin &&
+        this._releaseStaleSeatForNewRoom(previousRoom, playerId, targetRoom, { via: 'join_room' })) {
+      if (!joinIsCurrent() || this.gameService.getRoom(targetRoom.roomId) !== targetRoom) return;
+      previousRoom = this.gameService.getPlayerRoom(playerId);
+    }
     let releasedSeatProof = null;
     if (verifiedSeatReservation && previousRoom && previousRoom !== targetRoom &&
         previousRoom.status === GameRoomStatus.WAITING && previousRoom.backendManaged) {
@@ -2992,6 +2998,78 @@ class SocketHandlers {
     } catch (err) {
       return !sameSocket;
     }
+  }
+
+  /**
+   * A player who arrives with a VERIFIED backend seat in `targetRoom` while this
+   * server still seats them in a live `previousRoom` — with NO live socket on
+   * that seat — has moved on: the backend (which owns membership and the escrow)
+   * already let them into another room, i.e. it no longer shows them the old
+   * one. That is the ghost-table case: a restart hold nobody rejoined, a table
+   * whose every player lost the app, a room the backend's reaper detached.
+   * Refusing the join ("Player is already in another active room") stranded
+   * them — silently demoted to a SPECTATOR of the room they had just created —
+   * until the ghost reaped itself minutes later. Release the stale seat instead
+   * and let the join go through:
+   *   - nobody else is connected to the old room → void it (no result, refund);
+   *   - someone is still playing there → the leaver forfeits, exactly as an
+   *     explicit leave_room would (opponent wins).
+   * A seat that still has a live socket is a real double-play and stays refused.
+   * A lobby (WAITING) seat is not handled here: that one has the backend's own
+   * release proof (_verifyReleasedRoomSeat) and the restart seat-hold.
+   * @param {import('../models/GameRoom')} previousRoom
+   * @param {string} playerId
+   * @param {import('../models/GameRoom')} targetRoom
+   * @param {{via?: string}} [opts]
+   * @returns {boolean} true when the previous seat was released
+   * @private
+   */
+  _releaseStaleSeatForNewRoom(previousRoom, playerId, targetRoom, { via = 'join_room' } = {}) {
+    if (!previousRoom || !targetRoom || previousRoom === targetRoom) return false;
+    if (this.gameService.getRoom(previousRoom.roomId) !== previousRoom) return false;
+    // Cluster mode: only the owner may settle or void a room. A passive copy
+    // keeps today's refusal; the owner node resolves it on its own join path.
+    if (this._ownershipEnabled() && !this.ownedRoomIds.has(String(previousRoom.roomId))) return false;
+    const seat = previousRoom.getPlayer(playerId);
+    if (!seat || seat.isBot === true) return false;
+    const live = previousRoom.isInProgress?.() === true || previousRoom.awaitingNextRound === true;
+    if (!live || previousRoom._pendingBackendStart) return false;
+    if (seat.socketId && this.io.sockets.sockets.get(seat.socketId)) return false;
+
+    const othersConnected = previousRoom.getPlayers().some(
+      (p) =>
+        String(p.playerId) !== String(playerId) &&
+        p.isBot !== true &&
+        p.socketId &&
+        this.io.sockets.sockets.get(p.socketId)
+    );
+    this._logRoomLifecycle('stale_seat_released_for_new_room', {
+      roomId: previousRoom.roomId,
+      playerId,
+      targetRoomId: targetRoom.roomId,
+      via,
+      othersConnected,
+      restartHold: Boolean(previousRoom.restartHold),
+      seatStatus: seat.status || null,
+    });
+    logger.warn(
+      `[JOIN_ROOM] ${playerId} has a verified seat in ${targetRoom.roomId} but was still bound to live room ` +
+        `${previousRoom.roomId} with no socket — ${othersConnected ? 'forfeiting that seat' : 'voiding that room (nobody left in it)'}`
+    );
+    if (othersConnected) {
+      this._handlePlayerForfeit(null, previousRoom, playerId, seat, {
+        reason: String(previousRoom.hostPlayerId) === String(playerId) ? 'host_left' : 'opponent_left',
+      });
+    } else {
+      logger.runWithRoom(previousRoom.roomId, () =>
+        this._voidRoom(previousRoom, {
+          reason: 'abandoned',
+          message: 'Room ditutup — semua pemain sudah keluar',
+          lifecycleEvent: 'room_voided_all_players_gone',
+        })
+      );
+    }
+    return true;
   }
 
   async _verifyReleasedRoomSeat(socket, targetRoom, previousRoom, playerId, reservation, desiredSeat = reservation.playerIndex) {
@@ -4323,6 +4401,130 @@ class SocketHandlers {
   }
 
   /**
+   * Operator "Close game" (dev console → POST /webhooks/dev-close-room). Voids
+   * the room in whatever phase it is — lobby, mid-round, or the intermission
+   * between rounds — with NO result: everyone at the table (players and
+   * spectators) gets ROOM_CLOSED carrying the operator's message, every socket
+   * is detached, the room's timers die with it and the backend is told the room
+   * closed (reason `admin_closed`, via onRoomDeleted → _notifyBackendRoomClosed)
+   * so it de-lists and refunds. Idempotent on a room that is already gone.
+   *
+   * Body: { roomId, message?: string, reason?: string }
+   * @param {object} data
+   * @returns {{success: boolean, error?: string, roomId?: string, reason?: string,
+   *   wasInProgress?: boolean, playerCount?: number, alreadyClosed?: boolean}}
+   */
+  closeRoomFromDev(data = {}) {
+    return logger.runWithRoom(data?.roomId, () => this._closeRoomFromDevImpl(data));
+  }
+
+  _closeRoomFromDevImpl(data = {}) {
+    const roomId = data.roomId === null || data.roomId === undefined ? null : String(data.roomId);
+    if (!roomId) return { success: false, error: 'roomId required' };
+
+    const room = this.gameService.getRoom(roomId);
+    if (!room) {
+      this._logRoomLifecycle('dev_close_room_missing', { source: 'webhook', roomId });
+      return { success: true, roomId, alreadyClosed: true };
+    }
+
+    const reason =
+      typeof data.reason === 'string' && data.reason.trim()
+        ? data.reason.trim().slice(0, 64)
+        : 'admin_closed';
+    const message = typeof data.message === 'string' ? data.message.trim().slice(0, 300) : '';
+    const voided = this._voidRoom(room, {
+      reason,
+      message: message || 'Room ditutup oleh admin',
+      source: 'webhook',
+      lifecycleEvent: 'room_closed_by_admin',
+    });
+    return { success: true, roomId: room.roomId, reason, ...voided };
+  }
+
+  /**
+   * Void a live room with NO result, in whatever phase it is (lobby, mid-round,
+   * intermission, restart hold): everyone still at the table (players and
+   * spectators) gets ROOM_CLOSED, every socket is detached, the room's timers
+   * die with it, and the backend is told the room closed with `reason` (via
+   * onRoomDeleted → _notifyBackendRoomClosed, so it de-lists and refunds).
+   * The persisted snapshot is purged by the same hook, so a restart can never
+   * bring the room back. Shared by the admin "Close game", the maintenance /
+   * restart notices and the stale-seat release on join.
+   * @param {import('../models/GameRoom')} room
+   * @param {{reason: string, message?: string, source?: string, lifecycleEvent?: string}} opts
+   * @returns {{wasInProgress: boolean, playerCount: number}}
+   * @private
+   */
+  _voidRoom(room, { reason, message, source = 'socket', lifecycleEvent = 'room_voided' } = {}) {
+    const wasInProgress = room.isInProgress?.() === true || room.awaitingNextRound === true;
+    const players = room.getPlayers();
+
+    // Nothing may fire after the room is gone: a backend start still in flight
+    // re-checks `cancelled` before it deals, and the turn / next-round / host
+    // heartbeat / restart-hold timers would otherwise act on a deleted room.
+    if (room._pendingBackendStart) room._pendingBackendStart.cancelled = true;
+    if (room.restartHold) {
+      room.restartHold = null;
+      if (room.restartHoldHandle) {
+        clearTimeout(room.restartHoldHandle);
+        room.restartHoldHandle = null;
+      }
+    }
+    this._stopHostHeartbeat(room);
+    this._stopTurnTimer(room);
+    this._cancelNextRound(room, reason);
+    for (const player of players) {
+      this._cancelWaitingLeave(room.roomId, player.playerId);
+    }
+
+    // Players AND spectators share the socket.io room.
+    this.io.to(room.roomId).emit(SocketEvents.ROOM_CLOSED, {
+      reason,
+      message: message || 'Room ditutup',
+      timestamp: new Date().toISOString(),
+    });
+
+    players.forEach((player) => {
+      const playerSocket = this.io.sockets.sockets.get(player.socketId);
+      if (playerSocket) playerSocket.leave(room.roomId);
+    });
+    const spectators = this.roomSpectators.get(room.roomId);
+    if (spectators) {
+      for (const spectatorSocketId of spectators.keys()) {
+        const spectatorSocket = this.io.sockets.sockets.get(spectatorSocketId);
+        if (spectatorSocket) spectatorSocket.leave(room.roomId);
+        this.spectatorSocketToRoom.delete(spectatorSocketId);
+      }
+      this.roomSpectators.delete(room.roomId);
+    }
+
+    // Reason + per-backend URL travel through the stash: onRoomDeleted only gets
+    // a roomId, and the stash is also what makes it notify for a never-joined
+    // lobby (the backend must still de-list + refund that one).
+    this._roomCloseContext.set(String(room.roomId), {
+      reason,
+      backendBaseUrl: room.backendBaseUrl || null,
+    });
+    this._gameEvent(room, 'voided', {
+      reason,
+      message: message || null,
+      wasInProgress,
+      players: players.length,
+    });
+    this.gameService.deleteRoom(room.roomId);
+
+    this._logRoomLifecycle(lifecycleEvent, {
+      source,
+      roomId: room.roomId,
+      reason,
+      wasInProgress,
+      playerCount: players.length,
+    });
+    return { wasInProgress, playerCount: players.length };
+  }
+
+  /**
    * Ops/development broadcast (global, not room-scoped). Fans a maintenance /
    * restart notice out to EVERY connected socket so clients stop their active
    * game/lobby session. Triggered via POST /webhooks/development.
@@ -4332,6 +4534,14 @@ class SocketHandlers {
    * a pure "everything off" broadcast is meaningless (clients only stop on a
    * flag) and is rejected so a typo'd call fails loudly instead of silently
    * no-oping to every player in the world.
+   *
+   * A notice that makes every client LEAVE the table also voids every live room
+   * here (ROOM_CLOSED, timers stopped, backend room-closed → refund, snapshot
+   * purged). The rooms used to be left alone "because the restart wipes them" —
+   * but since the deploy drain snapshots and restores rooms, a cleared table came
+   * back after the boot as a ghost with nobody in it: held 60s, then ghost-
+   * turned for minutes, while its players — already back in the lobby — were
+   * refused a seat anywhere else ("already in another active room").
    */
   broadcastDevelopmentNotice(data = {}) {
     const hasMaintenanceKey =
@@ -4366,15 +4576,47 @@ class SocketHandlers {
     // maintenance/restart state (the broadcast itself is fire-and-forget).
     this.lastDevelopmentNotice = { ...payload, at: new Date().toISOString() };
 
+    // Every client just left its table — clear the tables server-side too, so
+    // nothing is restored after the restart and nobody stays bound to a room
+    // their app no longer shows. The notice goes out FIRST so clients read the
+    // maintenance/restart flag before the room_closed that follows.
+    let roomsClosed = 0;
+    if (maintenanceMode || restartServer) {
+      const reason = maintenanceMode ? 'maintenance' : 'server_restart';
+      const rooms = this.gameService?.getActiveRooms
+        ? this.gameService.getActiveRooms()
+        : Array.from(this.gameService?.rooms?.values?.() || []);
+      for (const room of rooms) {
+        // Cluster mode: a passive read-copy belongs to another node — that node
+        // voids it when the notice reaches it; deleting the copy here would only
+        // emit a stray room_closed and a duplicate backend webhook.
+        if (this._ownershipEnabled() && !this.ownedRoomIds.has(String(room.roomId))) continue;
+        try {
+          logger.runWithRoom(room.roomId, () =>
+            this._voidRoom(room, {
+              reason,
+              message: message || (maintenanceMode ? 'Game sedang dalam pemeliharaan' : 'Server akan di-restart'),
+              source: 'webhook',
+              lifecycleEvent: 'room_voided_by_notice',
+            })
+          );
+          roomsClosed += 1;
+        } catch (err) {
+          logger.warn(`[DEVELOPMENT] failed to void room ${room.roomId} on ${reason} notice: ${err.message}`);
+        }
+      }
+    }
+
     logger.info('[DEVELOPMENT] broadcast sent', {
       source: 'webhook',
       event: 'development',
       maintenanceMode,
       restartServer,
       hasMessage: Boolean(message),
+      roomsClosed,
     });
 
-    return { success: true, ...payload };
+    return { success: true, ...payload, roomsClosed };
   }
 
   /**
@@ -5694,12 +5936,21 @@ class SocketHandlers {
   }
 
   /**
-   * Tell the backend which rooms are genuinely alive — those with at least one
-   * CONNECTED HUMAN. Bot-only and fully-disconnected rooms are intentionally
-   * OMITTED so their backend record goes stale and the age-based reaper can
-   * force-detach the ghost links left behind by a crashed socket or a dropped
-   * room-closed webhook (B2). A waiting host sitting alone IS a connected human,
-   * so their open room stays fresh and is never force-closed out from under them.
+   * Tell the backend which rooms are genuinely alive — every room that still
+   * seats a HUMAN, connected or not. Bot-only rooms are omitted.
+   *
+   * A room whose humans are all disconnected is NOT dead: after a deploy every
+   * restored room is exactly that for the whole restart hold, and a mid-game
+   * drop keeps its (reconnectable) seat through the grace window and the
+   * offline strikes. Omitting those rooms (the old rule: "≥1 connected human")
+   * made the backend hide them from the lobby and force-detach their players
+   * precisely while this server was holding the table for them — so the
+   * players could never find their way back, and were refused a seat anywhere
+   * else because this server still bound them to the ghost. This server owns
+   * a room's lifetime: its own reapers (inactivity forfeit, all-humans-gone
+   * sweep, host heartbeat kill, restart hold) end it and fire room-closed. The
+   * backend's age-based reaper (B2) remains the backstop for a socket process
+   * that CRASHED — that one sends no beats at all.
    * Best-effort, no-op if BACKEND_URL isn't configured.
    * @private
    */
@@ -5720,10 +5971,8 @@ class SocketHandlers {
       if (room._seatLayoutSync?.dirty && !room._seatLayoutSync.running) {
         this._queueSeatLayoutSync(room);
       }
-      const hasConnectedHuman = room
-        .getPlayers()
-        .some((p) => p.isBot !== true && p.isConnected);
-      if (!hasConnectedHuman) continue;
+      const hasHumanSeat = room.getPlayers().some((p) => p.isBot !== true);
+      if (!hasHumanSeat) continue;
       const backendUrl = room.backendBaseUrl || defaultBackendUrl;
       if (!backendUrl) continue;
       if (!idsByBackend.has(backendUrl)) idsByBackend.set(backendUrl, []);
@@ -6641,7 +6890,11 @@ class SocketHandlers {
     const seat = Number(data.seat);
     const hasReservation = reservation?.isSpectator === false &&
       Number.isInteger(reservation.reservationVersion) && reservation.reservationVersion >= 0;
-    const otherRoom = this.gameService.getPlayerRoom(playerId);
+    let otherRoom = this.gameService.getPlayerRoom(playerId);
+    if (hasReservation && stillWatching() &&
+        this._releaseStaleSeatForNewRoom(otherRoom, playerId, room, { via: 'claim_seat' })) {
+      otherRoom = this.gameService.getPlayerRoom(playerId);
+    }
     let releasedSeatProof = null;
     if (hasReservation && otherRoom && otherRoom !== room && otherRoom.backendManaged &&
         otherRoom.status === GameRoomStatus.WAITING && stillWatching()) {

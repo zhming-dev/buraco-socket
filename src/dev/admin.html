@@ -67,15 +67,54 @@
   .room-item.ended { opacity: .8; }
   .side-h { font-size: 13px; color: var(--muted); margin: 18px 0 8px 12px; display: flex; align-items: center; gap: 8px; }
   .side-h:first-child { margin-top: 0; }
-  /* ---- ops modal ---- */
-  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 30; display: none; align-items: flex-start; justify-content: center; padding: 60px 16px; overflow-y: auto; }
+  /* ---- modals (server ops, close game) ---- */
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 100; /* above the board chrome (plates/HUD sit at 70-80) */ display: none; align-items: flex-start; justify-content: center; padding: 48px 16px; overflow-y: auto; }
   .modal-bg.show { display: flex; }
-  .modal { background: var(--panel); border-radius: 14px; width: min(760px, 100%); padding: 16px 18px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
-  .modal .mh { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-  .modal .mh h3 { margin: 0; font-size: 15px; }
-  .modal .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  @media (max-width: 700px) { .modal .grid2 { grid-template-columns: 1fr; } }
-  .modal .status-grid { grid-template-columns: repeat(2, 1fr); }
+  .modal { background: var(--panel); border-radius: 16px; width: min(860px, 100%); padding: 18px 22px 20px; box-shadow: 0 24px 70px rgba(0,0,0,.55); }
+  .modal.narrow { width: min(460px, 100%); }
+  .modal .mh { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .modal .mh h3 { margin: 0; font-size: 16px; font-weight: 600; }
+  .modal .mh .sub { color: var(--muted); font-size: 12.5px; }
+  .modal .grid2 { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 22px; }
+  @media (max-width: 760px) { .modal .grid2 { grid-template-columns: 1fr; } }
+  .modal .sec-h { font-size: 11px; letter-spacing: .9px; text-transform: uppercase; color: var(--muted); font-weight: 600; margin: 0 0 8px; }
+  .modal .status-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .modal .status-grid .stat.wide { grid-column: span 3; }
+  .modal .stat .k { font-size: 11.5px; }
+  .modal .stat .v { font-size: 13.5px; }
+  /* current announcement state, one line the operator can read at a glance */
+  .state { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-radius: 10px; padding: 10px 12px; margin-bottom: 16px; font-size: 13px; background: rgba(61,214,140,.1); }
+  .state::before { content: ''; width: 9px; height: 9px; border-radius: 50%; background: var(--ok); flex: none; box-shadow: 0 0 0 3px rgba(61,214,140,.2); }
+  .state.maint { background: rgba(255,93,93,.12); }
+  .state.maint::before { background: var(--danger); box-shadow: 0 0 0 3px rgba(255,93,93,.25); }
+  .state.restart { background: rgba(255,180,84,.12); }
+  .state.restart::before { background: var(--warn); box-shadow: 0 0 0 3px rgba(255,180,84,.25); }
+  .state.down { background: rgba(255,93,93,.18); }
+  .state.down::before { background: var(--danger); }
+  .state b { font-weight: 600; }
+  .state .when { color: var(--muted); }
+  .state .spacer { flex: 1; }
+  /* one card per operator action: what it does to players, then the button */
+  .actions { display: flex; flex-direction: column; gap: 8px; }
+  .action { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 14px; align-items: center; background: var(--panel2); border-radius: 12px; padding: 11px 14px; }
+  .action .t { font-weight: 600; font-size: 13.5px; }
+  .action .d { grid-column: 1; color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+  .action .d b { color: var(--text); font-weight: 500; }
+  .action button { grid-column: 2; grid-row: 1 / span 2; }
+  .action.dangerous { box-shadow: inset 0 0 0 1px rgba(255,93,93,.25); }
+  .msg-field { margin-bottom: 10px; }
+  .msg-field input { width: 100%; }
+  .msg-field .hint { display: block; margin-top: 4px; }
+  .modal .log { margin-top: 6px; max-height: 140px; }
+  .modal .log .ok { color: var(--text); }
+  .modal .log .t { color: var(--muted); margin-right: 8px; }
+  /* close-game dialog */
+  .facts-line { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12.5px; color: var(--muted); margin-bottom: 12px; }
+  .facts-line .room-id { font-family: var(--mono); color: var(--text); }
+  .consequence { background: var(--panel2); border-radius: 10px; padding: 10px 12px; font-size: 13px; line-height: 1.5; margin-bottom: 12px; }
+  .consequence ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+  .consequence li b { color: var(--text); font-weight: 500; }
+  .modal .foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
   /* ---- card selection (click-to-swap) ---- */
   .cf[data-cid], .pc[data-cid].pick { cursor: pointer; }
   .cf[data-cid]:hover, .pc.pick:hover { outline: 2px solid rgba(79,140,255,.6); outline-offset: 1px; }
@@ -133,7 +172,7 @@
   .empty { color: var(--muted); padding: 18px 0; text-align: center; font-size: 13px; }
   a { color: var(--accent); }
   .toast {
-    position: fixed; bottom: 18px; right: 18px; z-index: 20;
+    position: fixed; bottom: 18px; right: 18px; z-index: 110;
     background: var(--panel2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
     border-radius: 8px; padding: 10px 14px; font-size: 13px; max-width: 380px;
     box-shadow: 0 6px 24px rgba(0,0,0,.4); display: none;
@@ -366,6 +405,7 @@
       <div class="ws-head">
         <span class="room-id" id="ws-room-id">—</span>
         <button class="small ghost" id="btn-copy-id" title="copy room id" disabled>copy</button>
+        <button class="small danger" id="btn-close-game" title="kick everyone out and delete this game" disabled>Close game</button>
         <div class="spacer"></div>
         <label class="chk" title="stop refreshing the table">
           <input type="checkbox" id="detail-pause"> pause
@@ -419,32 +459,75 @@
 
 <div class="modal-bg" id="ops-modal">
   <div class="modal">
-    <div class="mh"><h3>Server</h3><div class="spacer"></div><button class="small" id="btn-ops-close">close</button></div>
+    <div class="mh">
+      <h3>Server</h3>
+      <span class="sub">this process, and notices that reach every connected player</span>
+      <div class="spacer"></div>
+      <button class="small" id="btn-ops-close">close</button>
+    </div>
+
+    <div class="state" id="ops-state"><span>Not connected</span></div>
+
     <div class="grid2">
       <div>
-        <div class="side-h">Server</div>
+        <div class="sec-h">This process</div>
         <div class="status-grid" id="server-stats"><div class="empty">not connected</div></div>
       </div>
       <div>
-        <div class="side-h">Broadcast</div>
-        <div class="row">
-          <input type="text" id="ops-message" placeholder="message to players (optional)" style="flex:1;min-width:0">
+        <div class="sec-h">Notify every player</div>
+        <div class="msg-field">
+          <input type="text" id="ops-message" placeholder="Message shown to players (optional)" maxlength="300">
+          <span class="hint">Sent along with whichever notice you pick below.</span>
         </div>
-        <div class="row">
-          <button class="danger" id="btn-maint-on">Maintenance on</button>
-          <button id="btn-maint-off">All clear</button>
-        </div>
-        <div class="row">
-          <button class="warn" id="btn-restart-announce">Announce restart</button>
-          <button class="danger" id="btn-restart-real" title="development{restart_server} to every client (they LEAVE the table), then graceful SIGTERM after 3s — needs pm2/systemd to bring it back">Restart process</button>
-        </div>
-        <div class="row">
-          <button class="primary" id="btn-restart-keep" title="server_restarting to every client (they KEEP the table), final snapshot, graceful SIGTERM after 3s; rooms are held on the next boot until a player rejoins — needs pm2/systemd to bring it back">Restart (keep sessions)</button>
+        <div class="actions">
+          <div class="action">
+            <div class="t">Restart, keep every table</div>
+            <div class="d">For deploys. Every room is snapshotted and the process stops 3 s later; players <b>stay at their table</b> and the game resumes when they rejoin after the boot. Needs pm2 / systemd / docker to bring it back.</div>
+            <button class="primary" id="btn-restart-keep">Restart</button>
+          </div>
+          <div class="action dangerous">
+            <div class="t">Maintenance mode</div>
+            <div class="d">Every player is told the game is under maintenance and their app <b>leaves the table</b>; <b>every game is closed</b> (no result, backend refunds). The server keeps running — press <b>All clear</b> above when you're done.</div>
+            <button class="danger" id="btn-maint-on">Turn on</button>
+          </div>
+          <div class="action dangerous">
+            <div class="t">Announce a restart</div>
+            <div class="d">Warns every player the server is about to restart; their app <b>leaves the table</b> and <b>every game is closed</b>. The process keeps running — use this before you restart it by hand.</div>
+            <button class="warn" id="btn-restart-announce">Announce</button>
+          </div>
+          <div class="action dangerous">
+            <div class="t">Restart, clear every table</div>
+            <div class="d">Sends the restart warning (players <b>leave the table</b>, <b>every game is closed</b>), then stops the process 3 s later. Needs pm2 / systemd / docker to bring it back.</div>
+            <button class="danger" id="btn-restart-real">Restart</button>
+          </div>
         </div>
       </div>
     </div>
-    <div class="side-h">Activity</div>
-    <div class="log" id="log"></div>
+
+    <div class="sec-h" style="margin-top:18px">Activity</div>
+    <div class="log" id="log"><div class="empty">nothing yet</div></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="close-modal">
+  <div class="modal narrow">
+    <div class="mh"><h3>Close this game?</h3><div class="spacer"></div><button class="small" id="btn-close-cancel">cancel</button></div>
+    <div class="facts-line" id="close-facts"></div>
+    <div class="consequence">
+      Everyone at the table is sent out and the game is deleted.
+      <ul>
+        <li><b>No winner</b> is recorded — the match is voided, not forfeited.</li>
+        <li>The backend is told the room closed (<b>admin_closed</b>) so it can de-list and refund.</li>
+        <li>Its story stays readable in the <b>Story</b> tab.</li>
+      </ul>
+    </div>
+    <div class="msg-field">
+      <input type="text" id="close-message" placeholder="Message shown to the players (optional)" maxlength="300">
+    </div>
+    <div class="foot">
+      <button class="ghost" id="btn-close-cancel2">Keep playing</button>
+      <button class="danger" id="btn-close-confirm">Close game</button>
+    </div>
   </div>
 </div>
 
@@ -474,9 +557,11 @@
 
   function log(msg, isErr) {
     var box = $('log');
+    if (box.querySelector('.empty')) box.innerHTML = '';
     var line = document.createElement('div');
     line.className = isErr ? 'err' : 'ok';
-    line.textContent = new Date().toLocaleTimeString() + '  ' + msg;
+    line.appendChild(el('span', 't', new Date().toLocaleTimeString([], { hour12: false })));
+    line.appendChild(txt(msg));
     box.insertBefore(line, box.firstChild);
     while (box.children.length > 80) box.removeChild(box.lastChild);
   }
@@ -668,6 +753,51 @@
 
   // ---- server status / rooms --------------------------------------------------
 
+  function fmtClock(iso) {
+    var d = new Date(iso);
+    return isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour12: false });
+  }
+
+  // The one-line "what have I told the players" banner at the top of the
+  // Server modal. All clear lives here (not among the actions) because it only
+  // makes sense while something is announced.
+  function renderOpsState(body) {
+    var box = $('ops-state');
+    var dev = body.development;
+    var cls = 'state', parts = [];
+    if (body.shuttingDown) {
+      cls += ' down';
+      parts.push(el('b', null, 'Shutting down'));
+      parts.push(el('span', null, 'this process is draining and will exit'));
+    } else if (dev && dev.maintenance_mode) {
+      cls += ' maint';
+      parts.push(el('b', null, 'Maintenance mode is ON'));
+      parts.push(el('span', null, 'players were told to leave their tables'));
+      if (dev.at) parts.push(el('span', 'when', 'since ' + fmtClock(dev.at)));
+    } else if (dev && dev.restart_server) {
+      cls += ' restart';
+      parts.push(el('b', null, 'Restart announced'));
+      parts.push(el('span', null, 'players were told to leave their tables'));
+      if (dev.at) parts.push(el('span', 'when', 'at ' + fmtClock(dev.at)));
+    } else {
+      parts.push(el('b', null, 'Nothing announced'));
+      parts.push(el('span', null, 'players can play normally'));
+    }
+    if (dev && dev.message && (dev.maintenance_mode || dev.restart_server)) {
+      parts.push(el('span', 'when', '“' + dev.message + '”'));
+    }
+    box.className = cls;
+    box.innerHTML = '';
+    parts.forEach(function (n) { box.appendChild(n); });
+    if (!body.shuttingDown && dev && (dev.maintenance_mode || dev.restart_server)) {
+      box.appendChild(el('div', 'spacer'));
+      var clear = el('button', 'small primary', 'All clear');
+      clear.title = 'tell every player maintenance is over / the restart is off';
+      clear.onclick = function () { broadcast({ maintenance_mode: false, restart_server: false }, 'All clear'); };
+      box.appendChild(clear);
+    }
+  }
+
   function renderStatus(body) {
     var badge = $('maintenance-badge');
     var dev = body.development;
@@ -675,7 +805,7 @@
       badge.textContent = 'maintenance: ON';
       badge.className = 'badge on';
     } else if (dev && dev.restart_server) {
-      badge.textContent = 'restart: announced ' + (dev.at || '');
+      badge.textContent = 'restart announced ' + fmtClock(dev.at);
       badge.className = 'badge on';
     } else {
       badge.textContent = 'maintenance: OFF';
@@ -687,24 +817,28 @@
       $('env-badge').textContent += ' · shutting down';
       $('env-badge').className = 'badge on';
     }
+    renderOpsState(body);
 
     var stats = body.stats || {};
     var gl = body.gameLog || {};
     var up = body.uptimeSeconds || 0;
+    var uptime = up >= 86400 ? Math.floor(up / 86400) + 'd ' + Math.floor((up % 86400) / 3600) + 'h'
+               : up >= 3600 ? Math.floor(up / 3600) + 'h ' + Math.floor((up % 3600) / 60) + 'm'
+               : Math.floor(up / 60) + 'm ' + (up % 60) + 's';
     var fields = [
-      ['node', body.nodeId],
-      ['pid', body.pid],
-      ['uptime', up >= 3600 ? Math.floor(up / 3600) + 'h ' + Math.floor((up % 3600) / 60) + 'm' : Math.floor(up / 60) + 'm'],
-      ['rooms', (stats.totalRooms || 0) + ' (' + (stats.activeRooms || 0) + ' live)'],
-      ['players', stats.totalPlayers || 0],
-      ['sockets', stats.activeSockets || 0],
-      ['game logs', plural(gl.rooms || 0, 'game') + ' · ' + plural(gl.entries || 0, 'line')],
-      ['kept for', gl.retentionMs ? Math.round(gl.retentionMs / 3600000 * 10) / 10 + 'h' + (gl.fileEnabled ? ' + on disk' : '') : '—'],
+      ['Node', body.nodeId || '—'],
+      ['Process id', body.pid],
+      ['Up for', uptime],
+      ['Games in memory', (stats.totalRooms || 0) + ' · ' + (stats.activeRooms || 0) + ' live'],
+      ['Players seated', stats.totalPlayers || 0],
+      ['Open sockets', stats.activeSockets || 0],
+      ['Game logs kept', plural(gl.rooms || 0, 'game') + ' · ' + plural(gl.entries || 0, 'line'), 'wide'],
+      ['Logs kept for', gl.retentionMs ? Math.round(gl.retentionMs / 3600000 * 10) / 10 + 'h in memory' + (gl.fileEnabled ? ', and written to disk' : '') : '—', 'wide'],
     ];
     var grid = $('server-stats');
     grid.innerHTML = '';
     fields.forEach(function (f) {
-      var d = el('div', 'stat');
+      var d = el('div', 'stat' + (f[2] ? ' ' + f[2] : ''));
       d.appendChild(el('div', 'k', f[0]));
       var v = el('div', 'v', f[1]);
       v.title = String(f[1]);
@@ -809,6 +943,7 @@
     selectedRoomId = roomId;
     setText($('ws-room-id'), roomId || '—');
     $('btn-copy-id').disabled = !roomId;
+    $('btn-close-game').disabled = true; // re-enabled once the live detail loads
     document.querySelectorAll('.room-item').forEach(function (it) {
       it.classList.toggle('selected', it.dataset.roomId === roomId);
     });
@@ -828,6 +963,7 @@
   function clearDetail() {
     $('detail-empty').style.display = '';
     $('detail-body').style.display = 'none';
+    $('btn-close-game').disabled = true;
   }
 
   // ---- workspace tabs -----------------------------------------------------------
@@ -902,6 +1038,7 @@
       lastDetail = d;
       $('detail-empty').style.display = 'none';
       $('detail-body').style.display = '';
+      $('btn-close-game').disabled = false;
       var inLobby = !d.cardsDealt && !d.inProgress && !d.awaitingNextRound;
       $('lobby').style.display = inLobby ? '' : 'none';
       $('board-wrap').style.display = inLobby ? 'none' : '';
@@ -1714,6 +1851,12 @@
           r.icon = '🚪';
           parts.push(who(d)); parts.push(txt(' left the room · ' + plural(d.remaining, 'player') + ' remaining'));
           break;
+        case 'voided':
+          r.icon = '⛔'; r.cls = 'end';
+          parts.push(el('b', null, VOID_TEXT[d.reason] || ('Room voided (' + d.reason + ')')));
+          parts.push(txt(' · ' + (d.wasInProgress ? 'mid-match' : 'in the lobby') + ' · ' + plural(d.players || 0, 'player') + ' sent out, no result'));
+          if (d.message) parts.push(el('span', 'sub', '“' + d.message + '”'));
+          break;
         case 'forfeit':
           r.icon = '🏳'; r.cls = 'end';
           parts.push(who(d)); parts.push(txt(' forfeited (' + d.reason + ')'));
@@ -1725,6 +1868,11 @@
       return r;
     }
 
+    var VOID_TEXT = {
+      admin_closed: 'Closed by an admin', maintenance: 'Closed — maintenance mode', server_restart: 'Closed — restart announced',
+      abandoned: 'Closed — nobody left at the table',
+    };
+
     var LIFE_TEXT = {
       room_created: 'room created', room_synced_from_backend: 'room synced from the backend',
       join_requested: 'asked to join', player_joined: 'joined', spectator_joined: 'joined as a spectator',
@@ -1733,6 +1881,10 @@
       next_round_scheduled: 'next round scheduled', next_round_started: 'next round started',
       next_round_cancelled: 'next round cancelled', next_round_aborted: 'match aborted before the next round',
       room_cancelled_by_backend: 'room cancelled by the backend', host_heartbeat_kill: 'lobby closed — host stopped responding',
+      room_closed_by_admin: 'room closed by an admin (dev console)', dev_close_room_missing: 'admin tried to close a room that was already gone',
+      room_voided_by_notice: 'room closed by a maintenance / restart notice', room_voided_all_players_gone: 'room closed — its last player took a seat elsewhere and nobody was left',
+      stale_seat_released_for_new_room: 'took a seat in another room — this seat had no connection, released',
+      restart_hold_started: 'held after a restart — waiting for a player to come back', restart_hold_released: 'restart hold released',
       start_rejected_incomplete_roster: 'start refused — seats missing', seat_claim_rejected: 'seat claim refused',
     };
 
@@ -2046,8 +2198,89 @@
   $('btn-ops-close').onclick = function () { $('ops-modal').classList.remove('show'); };
   $('ops-modal').addEventListener('click', function (e) { if (e.target === $('ops-modal')) $('ops-modal').classList.remove('show'); });
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') { $('ops-modal').classList.remove('show'); swapClear(); }
+    if (e.key === 'Escape') { $('ops-modal').classList.remove('show'); closeGame.hide(); swapClear(); }
   });
+
+  // ---- close game (operator voids the selected room) --------------------------------
+  //
+  // POST /webhooks/dev-close-room: everyone at the table gets room_closed with
+  // the optional message, the room is deleted with NO result and the backend is
+  // told (admin_closed) so it de-lists / refunds. Works in any phase.
+
+  var closeGame = (function () {
+    var roomId = null;
+
+    function phaseText(d) {
+      if (!d) return '';
+      if (d.awaitingNextRound) return 'between rounds';
+      if (d.inProgress) return 'playing' + (d.roundNumber ? ' · round ' + d.roundNumber : '');
+      if (d.cardsDealt) return 'dealt';
+      return 'in the lobby';
+    }
+
+    function show() {
+      if (!selectedRoomId || $('btn-close-game').disabled) return;
+      roomId = selectedRoomId;
+      var d = lastDetail && lastDetail.roomId === roomId ? lastDetail : null;
+      var facts = $('close-facts');
+      facts.innerHTML = '';
+      facts.appendChild(el('span', 'room-id', (d && d.name) || roomId));
+      if (d) {
+        var players = (d.players || []);
+        var humans = players.filter(function (p) { return !p.isBot; }).length;
+        facts.appendChild(el('span', null, '· ' + phaseText(d)));
+        facts.appendChild(el('span', null, '· ' + plural(players.length, 'player') + (players.length - humans ? ' (' + (players.length - humans) + ' bots)' : '')));
+        if (d.spectatorCount) facts.appendChild(el('span', null, '· ' + plural(d.spectatorCount, 'spectator')));
+      }
+      $('close-message').value = '';
+      $('btn-close-confirm').disabled = false;
+      $('close-modal').classList.add('show');
+      setTimeout(function () { $('close-message').focus(); }, 0);
+    }
+
+    function hide() { $('close-modal').classList.remove('show'); roomId = null; }
+
+    function confirmClose() {
+      if (!roomId) return;
+      var id = roomId;
+      var message = $('close-message').value.trim();
+      $('btn-close-confirm').disabled = true;
+      postJson('/webhooks/dev-close-room', Object.assign({ roomId: id }, message ? { message: message } : {})).then(function (res) {
+        if (!res.success) {
+          $('btn-close-confirm').disabled = false;
+          toast('Close refused: ' + res.error, true);
+          log('Close game ' + id + ' refused — ' + res.error, true);
+          return;
+        }
+        hide();
+        if (res.alreadyClosed) {
+          toast('That game was already gone.');
+          log('Close game ' + id + ': already gone');
+        } else {
+          toast('Game closed — ' + plural(res.playerCount || 0, 'player') + ' sent out.');
+          log('Closed game ' + id + ' (' + (res.wasInProgress ? 'mid-match' : 'lobby') + ', ' + plural(res.playerCount || 0, 'player') + ')' + (message ? ' · “' + message + '”' : ''));
+        }
+        if (selectedRoomId === id) {
+          clearDetail();
+          $('detail-empty').textContent = 'you closed this game — its story is in the Story tab';
+        }
+        poll();
+      }).catch(function (e) {
+        $('btn-close-confirm').disabled = false;
+        toast('Close failed: ' + e.message, true);
+        log('Close game ' + id + ' failed — ' + e.message, true);
+      });
+    }
+
+    $('btn-close-game').onclick = show;
+    $('btn-close-cancel').onclick = hide;
+    $('btn-close-cancel2').onclick = hide;
+    $('btn-close-confirm').onclick = confirmClose;
+    $('close-modal').addEventListener('click', function (e) { if (e.target === $('close-modal')) hide(); });
+    $('close-message').addEventListener('keydown', function (e) { if (e.key === 'Enter') confirmClose(); });
+
+    return { show: show, hide: hide };
+  })();
 
   $('detail-pause').onchange = function () {
     if (!this.checked) loadDetail(true);
@@ -2061,30 +2294,42 @@
     return m ? { message: m } : {};
   }
 
+  function describeNotice(payload) {
+    var what = payload.maintenance_mode ? 'maintenance ON' : payload.restart_server ? 'restart announced' : 'all clear (maintenance off, no restart)';
+    return what + (payload.message ? ' · “' + payload.message + '”' : '');
+  }
+
   function broadcast(payload, label) {
     return postJson('/webhooks/development', payload).then(function (result) {
       if (!result.success) {
         toast(label + ': ' + result.error, true);
-        log(label + ' rejected: ' + result.error, true);
+        log(label + ' refused — ' + result.error, true);
       } else {
-        toast(label + ' broadcast sent.');
-        log(label + ' → ' + JSON.stringify(payload));
+        var closedNote = result.roomsClosed ? ' · ' + plural(result.roomsClosed, 'game') + ' closed' : '';
+        toast(label + ' — sent to every player' + (result.roomsClosed ? ', ' + plural(result.roomsClosed, 'game') + ' closed.' : '.'));
+        log('Sent to every player: ' + describeNotice(payload) + closedNote);
       }
       poll();
     }).catch(function (e) {
       toast(label + ' failed: ' + e.message, true);
-      log(label + ': ' + e.message, true);
+      log(label + ' failed — ' + e.message, true);
     });
   }
 
+  function liveGameCount() { return document.querySelectorAll('#rooms-list .room-item').length; }
+  function confirmClearTables(what) {
+    var n = liveGameCount();
+    return confirm(what + '\n\nEvery player leaves their table and ' +
+      (n ? plural(n, 'live game') + ' will be closed with no result (the backend refunds).' : 'any live game is closed with no result.') +
+      '\nContinue?');
+  }
   $('btn-maint-on').onclick = function () {
+    if (!confirmClearTables('Turn maintenance mode ON?')) return;
     broadcast(Object.assign({ maintenance_mode: true }, opsMessage()), 'Maintenance ON');
   };
-  $('btn-maint-off').onclick = function () {
-    broadcast({ maintenance_mode: false, restart_server: false }, 'All clear');
-  };
   $('btn-restart-announce').onclick = function () {
-    broadcast(Object.assign({ restart_server: true }, opsMessage()), 'Restart announce');
+    if (!confirmClearTables('Announce a restart to every player?')) return;
+    broadcast(Object.assign({ restart_server: true }, opsMessage()), 'Restart announced');
   };
   // Two ways down, one webhook. Without `keep_sessions` the server broadcasts
   // `development { restart_server: true }` first — every client leaves the
@@ -2094,30 +2339,33 @@
   // supervisor.
   function restartProcess(keepSessions) {
     var question = keepSessions
-      ? 'Restart the server process and KEEP every live table?\n' +
-        'Clients get server_restarting, rooms are snapshotted and held on the next boot.\n' +
-        'It comes back only if a supervisor (pm2/systemd/docker) is running it.'
-      : 'Broadcast a restart notice (every client LEAVES the table) and shut the server process down?\n' +
-        'It comes back only if a supervisor (pm2/systemd/docker) is running it.';
+      ? 'Restart this server process and KEEP every live table?\n\n' +
+        'Every room is snapshotted, players stay at the table and the game resumes when they rejoin after the boot.\n' +
+        'The process stops in 3 s and comes back only if pm2 / systemd / docker is supervising it.'
+      : 'Restart this server process and CLEAR every table?\n\n' +
+        'Every player gets the restart warning and leaves their table; every live game is closed with no result; the process stops 3 s later.\n' +
+        'It comes back only if pm2 / systemd / docker is supervising it.';
     if (!confirm(question)) return;
     restarting = true;
     var payload = Object.assign({ shutdown_after_ms: 3000 }, opsMessage());
     if (keepSessions) payload.keep_sessions = true;
+    var label = keepSessions ? 'Restart (keep tables)' : 'Restart (clear tables)';
     postJson('/webhooks/dev-restart', payload).then(function (result) {
       if (!result.success) {
         restarting = false;
-        toast('Restart rejected: ' + result.error, true);
+        toast(label + ' refused: ' + result.error, true);
+        log(label + ' refused — ' + result.error, true);
         return;
       }
-      log('dev-restart' + (keepSessions ? ' (keep sessions)' : '') +
-          ': notice sent, process exits in ' + result.shutdownInMs + 'ms');
+      log(label + ': ' + (keepSessions ? 'rooms snapshotted, players keep their table' : 'restart warning sent, players leave the table') +
+          ' · this process stops in ' + (result.shutdownInMs / 1000) + ' s');
       toast('Restarting — server goes down in ' + (result.shutdownInMs / 1000) + 's.');
       document.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
       setTimeout(function () { window.location.reload(); }, 12000);
     }).catch(function (e) {
       restarting = false;
-      toast('Restart failed: ' + e.message, true);
-      log('dev-restart: ' + e.message, true);
+      toast(label + ' failed: ' + e.message, true);
+      log(label + ' failed — ' + e.message, true);
     });
   }
   $('btn-restart-real').onclick = function () { restartProcess(false); };

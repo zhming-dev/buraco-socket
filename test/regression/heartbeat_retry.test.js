@@ -20,7 +20,7 @@ const GameService = require('../../src/services/GameService');
 
 const fakeIo = () => ({ to: () => ({ emit: () => {} }), sockets: { sockets: new Map() } });
 
-/** A room with one CONNECTED HUMAN — the only kind that heartbeats. */
+/** A room with one connected human seat. */
 function liveRoom(service, roomId) {
   const room = service.createRoom(roomId, 2);
   service.joinRoom(roomId, 'u1', 'Human', 's1');
@@ -120,10 +120,35 @@ describe('#the lobby heartbeat survives a blip', () => {
     service.deleteRoom('hb4');
   });
 
-  it('still omits a room with no connected human', async () => {
+  // A room whose humans are all DISCONNECTED is still alive here: after a deploy
+  // every restored room is exactly that for the whole restart hold, and a
+  // mid-game drop keeps its reconnectable seat. Omitting it made the backend hide
+  // the table and detach its players while this server was holding it for them
+  // (they could never find their way back, and were refused a seat anywhere
+  // else). The beat now reports every room that still seats a human.
+  it('still beats a room whose only human is disconnected (held for reconnect)', async () => {
     const service = new GameService();
     const room = liveRoom(service, 'hb5');
     room.getPlayer('u1').isConnected = false;
+    room.getPlayer('u1').socketId = null;
+    const handlers = new SocketHandlers(fakeIo(), service);
+
+    global.fetch = (url, opts) => {
+      calls.push(JSON.parse(opts.body));
+      return Promise.resolve({ ok: true, status: 200 });
+    };
+
+    await handlers._notifyBackendHeartbeat();
+
+    expect(calls).to.have.lengthOf(1, 'the held room is reported alive');
+    expect(calls[0].activeRoomIds).to.deep.equal(['hb5']);
+    service.deleteRoom('hb5');
+  });
+
+  it('omits a bot-only room', async () => {
+    const service = new GameService();
+    const room = liveRoom(service, 'hb6');
+    room.getPlayer('u1').isBot = true;
     const handlers = new SocketHandlers(fakeIo(), service);
 
     global.fetch = () => {
@@ -133,7 +158,7 @@ describe('#the lobby heartbeat survives a blip', () => {
 
     await handlers._notifyBackendHeartbeat();
 
-    expect(calls).to.have.lengthOf(0, 'nothing alive to report');
-    service.deleteRoom('hb5');
+    expect(calls).to.have.lengthOf(0, 'nothing human to report');
+    service.deleteRoom('hb6');
   });
 });

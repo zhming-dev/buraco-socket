@@ -17,6 +17,13 @@ const SocketEvents = {
   PLAYER_DISCONNECTED: 'player_disconnected',
   PLAYER_RECONNECTED: 'player_reconnected',
   HOST_CHANGED: 'host_changed',
+  // Payload: { reason, message?, timestamp }. `reason` values a client may see:
+  // host_left / host_heartbeat_timeout (lobby died with its host),
+  // backend_cancelled (backend cancel-room), inactive / closed (server sweeps),
+  // admin_closed (dev console "Close game"), maintenance / server_restart (ops
+  // notice — arrives right after `development`), abandoned (the room's last
+  // player took a seat elsewhere and nobody was left). All of them mean: leave
+  // the table, no result — the backend has been told to de-list / refund.
   ROOM_CLOSED: 'room_closed',
   // Lobby settings edit: when the host PATCHes room settings the backend
   // re-syncs via /webhooks/sync-room; for a WAITING (lobby) room whose
@@ -119,6 +126,10 @@ const SocketEvents = {
   // imminent server restart. Clients stop the active game/lobby session when
   // either flag is set. Payload: { maintenance_mode: bool, restart_server: bool,
   // message?: string }. Triggered via POST /webhooks/development (x-webhook-secret).
+  // When either flag is true the server ALSO voids every live room right after
+  // this notice: each table gets ROOM_CLOSED { reason: 'maintenance' |
+  // 'server_restart', message } and is deleted, so nothing is restored after the
+  // restart and nobody stays bound to a table their app has left.
   DEVELOPMENT: 'development',
   // Graceful restart drain (deploy). Sent to every socket right before the
   // process closes them on purpose; the game state is snapshotted and resumes
