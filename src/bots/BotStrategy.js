@@ -64,6 +64,11 @@ class BotStrategy {
       return { type: 'wait' };
     }
 
+    if (ctx.kanoonPendingIds.length) {
+      const owed = this._kanoonMeldPending(state, ctx, hand);
+      if (owed) return owed;
+    }
+
     const addAction = this._findAddToMeldAction(state, ctx, hand);
     if (addAction) return addAction;
 
@@ -165,6 +170,20 @@ class BotStrategy {
       // _pickDiscard; every other planner branch is indifferent to it.
       discardLock: state.discardLock || null,
     };
+
+    // KANOON (1v1 variant on top of pro-direct). Two extra gates:
+    //   kanoonSetsLocked  — no NEW set until our side owns a buraco;
+    //   kanoonPendingIds  — cards this bot took off the pile this turn; while
+    //                       none of them is in a meld, the discard costs 100.
+    ctx.kanoon = state.kanoon === true;
+    ctx.kanoonSetsLocked = ctx.kanoon && !ctx.hasBrazilia;
+    ctx.kanoonPendingIds = [];
+    if (ctx.kanoon && Array.isArray(state.kanoonPileCardIds) && state.kanoonPileCardIds.length) {
+      const handIds = new Set((state.yourHand || []).map((c) => String(this._cardIdOf(c))));
+      const ids = state.kanoonPileCardIds.map(String);
+      // Satisfied the moment one taken card has left the hand (into a meld).
+      if (ids.every((id) => handIds.has(id))) ctx.kanoonPendingIds = ids;
+    }
 
     // Public information parity: hand COUNTS are already broadcast to every
     // human client (otherPlayersHandCounts), so using them is not cheating.
@@ -350,6 +369,10 @@ class BotStrategy {
     const hand = state.yourHand || [];
     const pile = ctx.discardPile;
     const ownMelds = ctx.ownMelds;
+
+    // KANOON: a take whose cards cannot reach a meld THIS turn is a certain
+    // 100-point charge, so it is never worth it, however rich the pile.
+    if (ctx.kanoon && !this._kanoonPileMeldable(state, ctx, pile, hand)) return false;
 
     // Top card extends one of our melds — always worth it, with ONE exception.
     for (const entry of ownMelds) {
@@ -842,9 +865,9 @@ class BotStrategy {
 
   _findBestNewMeld(state, ctx, hand, opts = {}) {
     let candidates = [
-      ...this._findSetMelds(hand, ctx),
+      ...(ctx.kanoonSetsLocked ? [] : this._findSetMelds(hand, ctx)),
       ...this._findSequenceMelds(hand, ctx),
-    ].filter((entry) => this._isLegalMeld(entry.cards, ctx));
+    ].filter((entry) => this._isLegalNewMeld(entry.cards, ctx));
 
     // Opening a bare 3-card meld by burning a joker/2 is a losing trade: the
     // wild is worth far more later (completing a canastra, or plugging a run
@@ -1115,6 +1138,102 @@ class BotStrategy {
 
   _isLegalMeld(cards, ctx) {
     return this._isValidSet(cards, ctx) || this._isValidSequence(cards, ctx);
+  }
+
+  /**
+   * Legal as a NEW meld: _isLegalMeld plus the Kanoon set lock (a group that is
+   * only valid as a set may not open while our side has no buraco). Extending an
+   * existing meld keeps using _isLegalMeld — no set can exist on a locked side.
+   */
+  _isLegalNewMeld(cards, ctx) {
+    if (this._isValidSequence(cards, ctx)) return true;
+    if (ctx.kanoonSetsLocked) return false;
+    return this._isValidSet(cards, ctx);
+  }
+
+  /** Id of a serialized card, in the same order of preference the server uses. */
+  _cardIdOf(card) {
+    if (!card) return null;
+    return card.cardId ?? card.instanceId ?? card.id ?? null;
+  }
+
+  /**
+   * KANOON pile gate: can at least one card of `pile` go into a meld this turn —
+   * onto an own meld, or into a new meld with cards already in hand?
+   */
+  _kanoonPileMeldable(state, ctx, pile, hand) {
+    for (const card of pile || []) {
+      if (ctx.ownMelds.some((entry) => this._canAddCardsToMeld(entry.cards, [card], ctx))) {
+        return true;
+      }
+      if (this._kanoonNewMeldWith(state, ctx, card, hand)) return true;
+    }
+    return false;
+  }
+
+  /** A legal new meld drawn from `card` + `hand` that contains `card`, or null. */
+  _kanoonNewMeldWith(state, ctx, card, hand) {
+    const pool = [card, ...hand.filter((c) => !this._sameCard(c, card))];
+    const candidates = [
+      ...(ctx.kanoonSetsLocked ? [] : this._findSetMelds(pool, ctx)),
+      ...this._findSequenceMelds(pool, ctx),
+    ].filter(
+      (entry) =>
+        this._isLegalNewMeld(entry.cards, ctx) &&
+        entry.cards.some((c) => this._sameCard(c, card))
+    );
+    if (candidates.length === 0) return null;
+    candidates.forEach((entry) => {
+      entry.score = this._scoreMeld(entry.cards, ctx);
+    });
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0];
+  }
+
+  /**
+   * KANOON: the pile was taken this turn and nothing from it is in a meld yet.
+   * Lay one of the taken cards before anything else — onto an own meld first
+   * (cheapest, keeps the hand's material), else in a new meld. Null when no
+   * taken card fits anywhere (the charge is then unavoidable; play on normally).
+   */
+  _kanoonMeldPending(state, ctx, hand) {
+    const pending = new Set(ctx.kanoonPendingIds);
+    const owed = hand.filter((c) => pending.has(String(this._cardIdOf(c))));
+    for (const card of owed) {
+      for (const entry of ctx.ownMelds) {
+        if (!this._canAddCardsToMeld(entry.cards, [card], ctx)) continue;
+        const grown = [...entry.cards, card];
+        if (
+          !this._safeToShed(state, ctx, this._handWithout(hand, [card]), {
+            actionMakesBrazilia: entry.cards.length < BRAZILIA_SIZE && grown.length >= BRAZILIA_SIZE,
+            resultingMeld: grown,
+            meldOwnedBySelf: entry.isOwn === true,
+          })
+        ) {
+          continue;
+        }
+        return {
+          type: 'add_to_meld',
+          cards: [card],
+          targetPlayerIndex: entry.playerIndex,
+          targetMeldIndex: entry.meldIndex,
+        };
+      }
+    }
+    for (const card of owed) {
+      const meld = this._kanoonNewMeldWith(state, ctx, card, hand);
+      if (
+        meld &&
+        this._safeToShed(state, ctx, this._handWithout(hand, meld.cards), {
+          actionMakesBrazilia: meld.cards.length >= BRAZILIA_SIZE,
+          resultingMeld: meld.cards,
+          meldOwnedBySelf: true,
+        })
+      ) {
+        return { type: 'play_meld', cards: meld.cards };
+      }
+    }
+    return null;
   }
 
   _canAddCardsToMeld(meld, cards, ctx) {

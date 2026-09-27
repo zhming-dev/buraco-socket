@@ -147,6 +147,17 @@ class GameRoom {
     // Ruleset configuration
     this.ruleset = 'classic'; // 'classic' | 'professional'
     this.professionalWellMode = 'indirect'; // 'direct' | 'indirect'
+    /**
+     * KANOON variant (1v1 only). Rides ON TOP of ruleset 'professional' + well
+     * mode 'direct' rather than being a ruleset of its own, so an older client
+     * that never heard of it still plays a correct pro-direct game and the
+     * server alone enforces the two extra rules:
+     *   1. no SET (same-rank meld) until the side owns a buraco;
+     *   2. a discard-pile take must put at least one taken card into a meld
+     *      before the discard, or the side is charged KANOON_PILE_CHARGE.
+     * Read it through isKanoon(), which also enforces the 1v1 half.
+     */
+    this.kanoon = false;
 
     // New PRO room settings (set from sync-room; see SocketHandlers.syncRoomFromBackend).
     /**
@@ -304,6 +315,17 @@ class GameRoom {
      * @type {{suit:string,rank:string}|null}
      */
     this.mustMeldCard = null;
+
+    /**
+     * KANOON pile obligation for the turn in progress: the ids of EVERY card the
+     * seat took off the discard pile this turn. Satisfied as soon as one of them
+     * is no longer in the hand for any reason other than the discard itself
+     * (i.e. it went into a meld); judged at discard time, so an UNDO that hands
+     * the card back re-opens the obligation for free. Per turn: nextTurn() and a
+     * new deal clear it.
+     * @type {{playerId:string, cardIds:string[]}|null}
+     */
+    this.kanoonPileTake = null;
 
     /**
      * ANTI PING-PONG (mirrors Flutter GameController._pileTakeLocks).
@@ -579,6 +601,7 @@ class GameRoom {
     // Anti ping-pong locks are per-round: the pile they refer to is gone.
     this.discardLocks = new Map();
     this.pileTakeHistory = new Map();
+    this.kanoonPileTake = null;
     // #11 multi-round: the discard pile is PER-ROUND state. dealCards() only
     // pushes the freshly-flipped top card onto it, so without this reset round 2+
     // would start holding every card discarded in round 1 — cards that the new
@@ -997,6 +1020,28 @@ class GameRoom {
   }
 
   /**
+   * True when the KANOON variant is in force. 1v1 only: a 4-seat room never
+   * plays it, whatever the flag says, so a stray sync cannot turn it on for a
+   * 2v2 table.
+   */
+  isKanoon() {
+    return this.kanoon === true && this.maxPlayers === 2;
+  }
+
+  /**
+   * Switch the KANOON variant on/off. Kanoon is defined on top of pro-direct,
+   * so turning it on pins both halves of that base.
+   * @param {boolean} enabled
+   */
+  setKanoon(enabled) {
+    this.kanoon = enabled === true;
+    if (this.kanoon) {
+      this.ruleset = 'professional';
+      this.professionalWellMode = 'direct';
+    }
+  }
+
+  /**
    * Advance to next player's turn
    */
   nextTurn() {
@@ -1019,6 +1064,7 @@ class GameRoom {
     this.drawnCardThisTurnRestriction = new Set();
     this.meldedThisTurn = false;
     this.mustMeldCard = null;
+    this.kanoonPileTake = null;
     this.lastMeldSnapshot = null;
     // discardLocks is not CLEARED here — it is TICKED at the top of this method.
     // The ping-pong the rule stops happens ACROSS turns (take the pile, pass,
@@ -1059,6 +1105,7 @@ class GameRoom {
       currentTurn: this.currentTurn,
       ruleset: this.ruleset,
       professionalWellMode: this.professionalWellMode,
+      kanoon: this.isKanoon(),
       // New PRO settings (#11 + chat) so a reconnecting client/back end
       // can read the active room configuration.
       targetScore: this.targetScore,

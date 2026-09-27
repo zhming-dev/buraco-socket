@@ -1179,6 +1179,7 @@ class SocketHandlers {
         currentPlayerIndex: this._announcedTurnIndex(room),
         ruleset: room.ruleset,
         professionalWellMode: room.professionalWellMode,
+        kanoon: room.isKanoon?.() === true,
         hostId: room.hostPlayerId || null,
         turnTimeLimitSeconds: room.turnTimeLimit,
         timestamp: new Date().toISOString(),
@@ -1203,6 +1204,7 @@ class SocketHandlers {
       turnTimeLimitSeconds: room.turnTimeLimit,
       ruleset: room.ruleset,
       professionalWellMode: room.professionalWellMode,
+      kanoon: room.isKanoon?.() === true,
       yourHand: [],
       otherPlayersHandCounts,
       discardPile: room.discardPile.map((card) => this._serializeCard(card)),
@@ -1405,6 +1407,17 @@ class SocketHandlers {
       roomName: room.name || null,
       ruleset: room.ruleset,
       professionalWellMode: room.professionalWellMode,
+      kanoon: room.isKanoon?.() === true,
+      // KANOON rule 2 obligation of the turn in progress: which cards came off
+      // the pile. The client warns before a discard that would be charged; the
+      // server still decides (ActionHandlers._applyKanoonPileCharge). Cards the
+      // pile held were face-up to the whole table, so nothing private leaks.
+      kanoonPileTake: room.isKanoon?.() === true && room.kanoonPileTake
+        ? {
+          playerIndex: room.getPlayer(room.kanoonPileTake.playerId)?.playerIndex ?? null,
+          cardIds: room.kanoonPileTake.cardIds,
+        }
+        : null,
       turnTimeLimit: room.turnTimeLimit,
       turnTimeLimitSeconds: room.turnTimeLimit,
       targetScore: room.targetScore,
@@ -2679,6 +2692,10 @@ class SocketHandlers {
       if (data?.professionalWellMode === 'direct' || data?.professionalWellMode === 'indirect') {
         targetRoom.professionalWellMode = data.professionalWellMode;
       }
+
+      if (typeof data?.kanoon === 'boolean') {
+        targetRoom.setKanoon(data.kanoon);
+      }
     }
     // Snapshot the seat BEFORE joinRoom rebinds it. `joinRoom` reports
     // `reconnected: true` for ANY rejoin by a seated player — including one from
@@ -3783,6 +3800,12 @@ class SocketHandlers {
       room.professionalWellMode = data.professionalWellMode;
     }
 
+    // KANOON variant. Applied AFTER ruleset/well mode because turning it on pins
+    // both (pro + direct); an absent key leaves the room as it was.
+    if (typeof data.kanoon === 'boolean') {
+      room.setKanoon(data.kanoon);
+    }
+
     // Lobby visibility + password gate, mirrored from the host's settings edit.
     // The socket never receives the raw/hashed password — only `hasPassword`,
     // an explicit backend boolean (or, when visibility flips public, false).
@@ -4264,6 +4287,7 @@ class SocketHandlers {
       targetScore: room.targetScore,
       turnTimeLimitSeconds: room.turnTimeLimit,
       professionalWellMode: room.professionalWellMode,
+      kanoon: room.isKanoon?.() === true,
       chatEnabled: Boolean(room.chatEnabled),
       hasPassword: Boolean(room.hasPassword),
     });
@@ -8008,6 +8032,7 @@ class SocketHandlers {
         currentPlayerIndex: this._announcedTurnIndex(room),
         ruleset: room.ruleset,
         professionalWellMode: room.professionalWellMode,
+        kanoon: room.isKanoon?.() === true,
         hostId: room.hostPlayerId || null,
         turnTimeLimitSeconds: room.turnTimeLimit,
         timestamp: new Date().toISOString(),
@@ -8046,6 +8071,7 @@ class SocketHandlers {
       players: room.getPlayers().map((p) => this._serializePlayer(p)),
       ruleset: room.ruleset,
       professionalWellMode: room.professionalWellMode,
+      kanoon: room.isKanoon?.() === true,
       turnTimeLimit: room.turnTimeLimit,
       turnTimeLimitSeconds: room.turnTimeLimit,
       yourHand: yourHand.map((card) => this._serializeCard(card)),
@@ -8667,6 +8693,7 @@ class SocketHandlers {
         hand: (room.playerHands.get(playerId) || []).length,
         pozzettoTaken: result.broadcast?.pozzettoTaken || 0,
         minimumMeldFailed: Boolean(result.broadcast?.minimumMeld),
+        kanoonPenalty: result.broadcast?.kanoonPenalty?.value || 0,
         nextSeat: result.roundEnded ? null : (result.turnChanged?.newPlayerIndex ?? room.currentTurn),
       });
       if (result.roundEnded) {
@@ -8705,6 +8732,10 @@ class SocketHandlers {
         // it has to travel with the turn rather than wait for the round-over
         // board.
         ...(result.broadcast?.minimumMeld ? { minimumMeld: result.broadcast.minimumMeld } : {}),
+        // KANOON: the pile taken this turn never reached a meld. The charge is
+        // already in teamTurnPenalty (and so in the state frame that follows);
+        // this is the half that lets the client say WHY right now.
+        ...(result.broadcast?.kanoonPenalty ? { kanoonPenalty: result.broadcast.kanoonPenalty } : {}),
         timestamp: new Date().toISOString(),
       };
 
@@ -9671,6 +9702,18 @@ class SocketHandlers {
         }
       }
 
+      // KANOON rule 2: remember every card this take brought in; the discard
+      // that ends the turn is charged unless one of them reached a meld.
+      room.kanoonPileTake = room.isKanoon()
+        ? {
+          playerId,
+          cardIds: normalizedPicked
+            .map((c) => c?.cardId ?? c?.instanceId ?? c?.id ?? null)
+            .filter((id) => id !== null && id !== undefined)
+            .map(String),
+        }
+        : null;
+
       logger.info(
         `[PICK_UP_PILE] ✓ Player ${playerId} picked up ${pickedCards.length} cards. Hand: ${handSizeBefore} → ${playerHand.length}`
       );
@@ -9792,6 +9835,7 @@ class SocketHandlers {
               roomName: room.name || null, // human-readable room name (#4)
               ruleset: room.ruleset,
               professionalWellMode: room.professionalWellMode,
+              kanoon: room.isKanoon?.() === true,
               yourHand: yourHand.map((card) => this._serializeCard(card)),
               otherPlayersHandCounts, // Keep counts for backward compatibility
               discardPile: room.discardPile.map((card) => this._serializeCard(card)),
@@ -10604,6 +10648,7 @@ class SocketHandlers {
               currentPlayerIndex: this._announcedTurnIndex(room),
               ruleset: room.ruleset,
               professionalWellMode: room.professionalWellMode,
+              kanoon: room.isKanoon?.() === true,
               turnTimeLimitSeconds: room.turnTimeLimit,
               cardsDealt: room.cardsDealt || false,
               ...this._skinsPayloadFields(room),
@@ -10630,6 +10675,7 @@ class SocketHandlers {
               phase: 'playing',
               ruleset: room.ruleset,
               professionalWellMode: room.professionalWellMode,
+              kanoon: room.isKanoon?.() === true,
               turnTimeLimit: room.turnTimeLimit,
               turnTimeLimitSeconds: room.turnTimeLimit,
               yourHand: yourHand.map((card) => this._serializeCard(card)),

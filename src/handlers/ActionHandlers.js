@@ -6,6 +6,7 @@
 const { GameValidator } = require('../validators');
 const { GameRoomStatus } = require('../constants');
 const { Card } = require('../models/Deck');
+const logger = require('../utils/logger');
 
 /** Cards a meld needs to be a buraco — and the size below which no grade
  * exists to ratchet (see _latchMeldGrade). Same figure the isBuraco stamps
@@ -212,6 +213,11 @@ class ActionHandlers {
     }
     const resolvedCard = taken.cards[0];
     room.playerHands.set(playerId, taken.remaining);
+    // KANOON rule 2 — judged on the hand as it stands after the thrown card has
+    // left it, and BEFORE the minimum-meld audit below can hand cards back: the
+    // pile card the player did meld counts even if that audit later rolls the
+    // meld back (it has its own consequence; this charge is for never trying).
+    const kanoonPenalty = this._applyKanoonPileCharge(room, playerId, resolvedCard);
     const toPile = resolvedCard && typeof resolvedCard.toJSON === 'function'
       ? resolvedCard
       : new Card(resolvedCard.suit, resolvedCard.rank, this._cardId(resolvedCard));
@@ -225,6 +231,7 @@ class ActionHandlers {
       type: 'card_discarded',
       playerIndex: player.playerIndex,
       card: resolvedCard,
+      ...(kanoonPenalty ? { kanoonPenalty } : {}),
       timestamp: new Date().toISOString(),
     };
 
@@ -317,6 +324,49 @@ class ActionHandlers {
       success: true,
       broadcast: discardMessage,
       turnChanged: turnMessage,
+    };
+  }
+
+  /**
+   * KANOON rule 2: a seat that took the discard pile this turn must lay at least
+   * one of the taken cards before it discards; a discard that ends the turn with
+   * every taken card still in hand (the one being thrown aside) charges the seat
+   * KANOON_PILE_CHARGE through the turn-penalty ledger — the same ledger the
+   * round score, the voided-round total and the HUD already read, so no scoring
+   * path needs to know Kanoon exists. The discard itself stays legal: the rule
+   * is a penalty, not a block. Runs on every discard path (manual and the turn
+   * timeout's auto-discard both go through handleDiscard).
+   * @param {GameRoom} room
+   * @param {string} playerId
+   * @param {Object} discarded - the card that just left the hand
+   * @returns {{value:number, reason:string, playerIndex:number}|null}
+   */
+  static _applyKanoonPileCharge(room, playerId, discarded) {
+    const take = room.kanoonPileTake;
+    room.kanoonPileTake = null;
+    if (typeof room.isKanoon !== 'function' || !room.isKanoon()) return null;
+    if (!take || take.playerId !== playerId || !Array.isArray(take.cardIds) || take.cardIds.length === 0) {
+      return null;
+    }
+    const discardedId = this._cardId(discarded);
+    const inHand = new Set(
+      (room.playerHands.get(playerId) || []).map((c) => String(this._cardId(c)))
+    );
+    const melded = take.cardIds.some(
+      (id) => String(id) !== String(discardedId) && !inHand.has(String(id))
+    );
+    if (melded) return null;
+
+    const charge = this.KANOON_PILE_CHARGE;
+    room.teamTurnPenalty.set(playerId, (room.teamTurnPenalty.get(playerId) || 0) + charge);
+    const player = room.getPlayer(playerId);
+    logger.info(
+      `[KANOON] ${playerId} discarded without melding a card from the pile taken this turn — charged ${charge}`
+    );
+    return {
+      value: -charge,
+      reason: 'pile_not_melded',
+      playerIndex: player ? player.playerIndex : null,
     };
   }
 
@@ -1944,6 +1994,11 @@ class ActionHandlers {
    * Applies to the WINNING side too: going out does not excuse an unmet
    * obligation.
    */
+  /** KANOON rule 2: what a pile take that never reaches a meld costs the seat. */
+  static get KANOON_PILE_CHARGE() {
+    return 100;
+  }
+
   static get ROUND_VOID_CHARGE() {
     return -100;
   }

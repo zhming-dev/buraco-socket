@@ -153,6 +153,8 @@ class FailureManager extends EventEmitter {
         phase: room.phase,
         ruleset: room.ruleset,
         professionalWellMode: room.professionalWellMode,
+        kanoon: room.kanoon === true,
+        kanoonPileTake: room.kanoonPileTake || null,
         targetScore: room.targetScore,
         nextRoundDelayMs: room.nextRoundDelayMs ?? null,
         // #11 multi-round: a room mid-intermission is FINISHED with a live 10s
@@ -1139,6 +1141,11 @@ class FailureManager extends EventEmitter {
     room.phase = state.phase;
     room.ruleset = state.ruleset || room.ruleset;
     room.professionalWellMode = state.professionalWellMode || room.professionalWellMode;
+    room.kanoon = state.kanoon === true;
+    room.kanoonPileTake =
+      state.kanoonPileTake && Array.isArray(state.kanoonPileTake.cardIds)
+        ? { playerId: state.kanoonPileTake.playerId, cardIds: state.kanoonPileTake.cardIds.map(String) }
+        : null;
     room.targetScore = Number.isFinite(Number(state.targetScore))
       ? Number(state.targetScore)
       : room.targetScore;
