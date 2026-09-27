@@ -1939,7 +1939,7 @@
             parts.push(txt(' · ' + d.meldsReturned + ' melded card(s) had to be taken back first'));
             if (d.returnedCards) { parts.push(txt(': ')); parts.push(cards(d.returnedCards)); }
           }
-          if (d.kanoonPenalty) parts.push(el('span', 'badge tiny dirty', 'Kanoon ' + d.kanoonPenalty));
+          if (d.qanoonPenalty) parts.push(el('span', 'badge tiny dirty', 'Qanoon ' + d.qanoonPenalty));
           if (d.nextSeat != null) r.divider = seatName(d.nextSeat) + "'s turn";
           break;
         case 'meld':

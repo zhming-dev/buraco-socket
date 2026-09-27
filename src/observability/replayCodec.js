@@ -167,7 +167,7 @@ function buildKeyframe(room, opts = {}) {
     round: room.roundNumber || 1,
     ruleset: room.ruleset || 'classic',
     wellMode: room.professionalWellMode || null,
-    kanoon: typeof room.isKanoon === 'function' ? room.isKanoon() : room.kanoon === true,
+    qanoon: typeof room.isQanoon === 'function' ? room.isQanoon() : room.qanoon === true,
     maxPlayers: room.maxPlayers,
     targetScore: Number(room.targetScore) || 0,
     turn: room.currentTurn ?? null,

@@ -41,7 +41,7 @@ function socketMock(id) {
 }
 
 let counter = 0;
-function dealtTable({ ruleset = 'classic', wellMode = 'indirect', kanoon = false, targetScore = 0 } = {}) {
+function dealtTable({ ruleset = 'classic', wellMode = 'indirect', qanoon = false, targetScore = 0 } = {}) {
   counter += 1;
   const roomId = `payload-${counter}-${Date.now()}`;
   const service = new GameService();
@@ -59,7 +59,7 @@ function dealtTable({ ruleset = 'classic', wellMode = 'indirect', kanoon = false
   const room = service.getRoom(roomId);
   room.ruleset = ruleset;
   room.professionalWellMode = wellMode;
-  if (kanoon) room.setKanoon(true);
+  if (qanoon) room.setQanoon(true);
   room.targetScore = targetScore;
   handler.handleStartGame(s1, {});
   handler._stopTurnTimer(room);
@@ -264,13 +264,13 @@ describe('[GAME] event payloads (recorder)', () => {
     }
   });
 
-  it('kanoonPenalty rides the manual discard and the timeout auto-discard', async () => {
-    const t = dealtTable({ kanoon: true });
+  it('qanoonPenalty rides the manual discard and the timeout auto-discard', async () => {
+    const t = dealtTable({ qanoon: true });
     try {
       const me = t.current();
       t.handler.handlePickUpPile(me.socket, {});
       const hand = t.room.playerHands.get(me.playerId);
-      const takenIds = t.room.kanoonPileTake.cardIds;
+      const takenIds = t.room.qanoonPileTake.cardIds;
       const taken = hand.filter((c) => takenIds.includes(String(c.cardId)));
       // Not a taken card, and not a TWIN of one either: a lone-card take locks
       // every same-face copy already in hand (anti ping-pong), so a twin picked
@@ -285,14 +285,14 @@ describe('[GAME] event payloads (recorder)', () => {
       t.handler.handleDiscardCard(me.socket, { card: throwAway.toJSON() });
       expect(t.room.playerHands.get(me.playerId)).to.not.include(throwAway);
       const manual = last(await events(t.roomId), 'discard');
-      expect(manual.kanoonPenalty).to.equal(-ActionHandlers.KANOON_PILE_CHARGE);
+      expect(manual.qanoonPenalty).to.equal(-ActionHandlers.QANOON_PILE_CHARGE);
 
       const next = t.current();
       t.handler.handlePickUpPile(next.socket, {});
       t.handler._onTurnTimerExpired(t.room);
       const auto = last(await events(t.roomId), 'discard');
       expect(auto.auto).to.equal(true);
-      expect(auto.kanoonPenalty).to.equal(-ActionHandlers.KANOON_PILE_CHARGE);
+      expect(auto.qanoonPenalty).to.equal(-ActionHandlers.QANOON_PILE_CHARGE);
     } finally {
       t.done();
     }

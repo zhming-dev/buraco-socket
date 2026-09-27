@@ -49,7 +49,7 @@ const FLUSH_ON = new Set(['round_end']);
 const QUIET_DEFAULTS = new Set([
   'pozzettoTaken',
   'minimumMeldFailed',
-  'kanoonPenalty',
+  'qanoonPenalty',
   'meldsReturned',
   'auto',
   'isBuraco',
@@ -274,7 +274,7 @@ class GameEventRecorder {
         maxPlayers: room.maxPlayers,
         ruleset: room.ruleset || 'classic',
         wellMode: room.professionalWellMode || null,
-        kanoon: typeof room.isKanoon === 'function' ? room.isKanoon() : false,
+        qanoon: typeof room.isQanoon === 'function' ? room.isQanoon() : false,
         targetScore: Number(room.targetScore) || 0,
         bet: Number(room.bet) || 0,
         seats: players.map((p) => ({
@@ -422,7 +422,7 @@ class GameEventRecorder {
       partial: header.partial,
       truncated: header.truncated,
       ruleset: header.ruleset,
-      kanoon: header.kanoon,
+      qanoon: header.qanoon,
       maxPlayers: header.maxPlayers,
       targetScore: header.targetScore,
       seats: header.seats,

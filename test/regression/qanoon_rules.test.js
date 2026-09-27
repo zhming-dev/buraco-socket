@@ -1,5 +1,5 @@
 /**
- * KANOON — the 1v1 variant that rides on pro-direct.
+ * QANOON — the 1v1 variant that rides on pro-direct.
  *
  * Owner's spec (2026-09-27):
  *   1. No SET of one rank (3-3-3, and the 2-2-2 set too) until the side owns a
@@ -23,11 +23,11 @@ const c = (rank, suit) => new Card(suit, rank);
 const run = (suit, ranks) => ranks.map((r) => c(r, suit));
 const SPADE_BURACO = () => run('spades', ['4', '5', '6', '7', '8', '9', '10']);
 
-function makeRoom({ seats = 2, kanoon = true } = {}) {
-  const room = new GameRoom({ roomId: 'kanoon-room', maxPlayers: seats });
+function makeRoom({ seats = 2, qanoon = true } = {}) {
+  const room = new GameRoom({ roomId: 'qanoon-room', maxPlayers: seats });
   room.status = GameRoomStatus.IN_PROGRESS;
-  room.setKanoon(kanoon);
-  if (!kanoon) {
+  room.setQanoon(qanoon);
+  if (!qanoon) {
     room.ruleset = 'professional';
     room.professionalWellMode = 'direct';
   }
@@ -51,19 +51,19 @@ function makeRoom({ seats = 2, kanoon = true } = {}) {
   return room;
 }
 
-describe('#kanoon', () => {
+describe('#qanoon', () => {
   describe('the variant itself', () => {
     it('pins pro + direct when switched on', () => {
       const room = makeRoom();
       expect(room.ruleset).to.equal('professional');
       expect(room.professionalWellMode).to.equal('direct');
-      expect(room.isKanoon()).to.equal(true);
+      expect(room.isQanoon()).to.equal(true);
     });
 
     it('is 1v1 only: a 4-seat room never plays it, whatever the flag says', () => {
       const room = makeRoom({ seats: 4 });
-      expect(room.kanoon).to.equal(true);
-      expect(room.isKanoon()).to.equal(false);
+      expect(room.qanoon).to.equal(true);
+      expect(room.isQanoon()).to.equal(false);
     });
   });
 
@@ -75,7 +75,7 @@ describe('#kanoon', () => {
       room.playerHands.set('p1', [...kings(), c('9', 'clubs')]);
       const res = GameValidator.validateMeld(room, 'p1', room.playerHands.get('p1').slice(0, 3));
       expect(res.isValid).to.equal(false);
-      expect(res.reason).to.equal('kanoonSetLocked');
+      expect(res.reason).to.equal('qanoonSetLocked');
     });
 
     it('refuses the 2-2-2 set too', () => {
@@ -83,7 +83,7 @@ describe('#kanoon', () => {
       room.playerHands.set('p1', [c('2', 'hearts'), c('2', 'diamonds'), c('2', 'clubs'), c('9', 'clubs')]);
       const res = GameValidator.validateMeld(room, 'p1', room.playerHands.get('p1').slice(0, 3));
       expect(res.isValid).to.equal(false);
-      expect(res.reason).to.equal('kanoonSetLocked');
+      expect(res.reason).to.equal('qanoonSetLocked');
     });
 
     it('still lets a run through', () => {
@@ -106,7 +106,7 @@ describe('#kanoon', () => {
       room.playerMelds.set('p2', [SPADE_BURACO()]);
       room.playerHands.set('p1', [...kings(), c('9', 'clubs')]);
       const res = GameValidator.validateMeld(room, 'p1', room.playerHands.get('p1').slice(0, 3));
-      expect(res.reason).to.equal('kanoonSetLocked');
+      expect(res.reason).to.equal('qanoonSetLocked');
     });
 
     it('a going-down that lays a 7-card run unlocks the set travelling with it', () => {
@@ -124,11 +124,11 @@ describe('#kanoon', () => {
       room.playerHands.set('p1', [...short, ...set, c('9', 'clubs')]);
       const res = GameValidator.validateGoingDown(room, 'p1', [short, set]);
       expect(res.isValid).to.equal(false);
-      expect(res.reason).to.equal('kanoonSetLocked');
+      expect(res.reason).to.equal('qanoonSetLocked');
     });
 
     it('plain pro-direct keeps sets open', () => {
-      const room = makeRoom({ kanoon: false });
+      const room = makeRoom({ qanoon: false });
       room.playerHands.set('p1', [...kings(), c('9', 'clubs')]);
       expect(GameValidator.validateMeld(room, 'p1', room.playerHands.get('p1').slice(0, 3)).isValid).to.equal(true);
     });
@@ -141,7 +141,7 @@ describe('#kanoon', () => {
       const taken = [c('7', 'hearts'), c('8', 'hearts')];
       const hand = [c('5', 'hearts'), c('6', 'hearts'), c('K', 'clubs'), c('J', 'diamonds'), ...taken];
       room.playerHands.set('p1', hand);
-      room.kanoonPileTake = { playerId: 'p1', cardIds: taken.map((t) => String(t.cardId)) };
+      room.qanoonPileTake = { playerId: 'p1', cardIds: taken.map((t) => String(t.cardId)) };
       return { room, taken, hand };
     };
 
@@ -149,11 +149,11 @@ describe('#kanoon', () => {
       const { room, hand } = tookPile();
       const res = ActionHandlers.handleDiscard(room, 'p1', hand[2]);
       expect(res.success, res.error).to.equal(true);
-      expect(res.broadcast.kanoonPenalty).to.deep.equal({ value: -100, reason: 'pile_not_melded', playerIndex: 0 });
+      expect(res.broadcast.qanoonPenalty).to.deep.equal({ value: -100, reason: 'pile_not_melded', playerIndex: 0 });
       expect(room.teamTurnPenalty.get('p1')).to.equal(100);
       // …and the HUD/round board read it from the ledger they already use.
       expect(ActionHandlers.serializeTeamRoundState(room).teamTurnPenalty.teamA).to.equal(100);
-      expect(room.kanoonPileTake).to.equal(null);
+      expect(room.qanoonPileTake).to.equal(null);
     });
 
     it('no charge once one taken card is in a meld', () => {
@@ -163,7 +163,7 @@ describe('#kanoon', () => {
       expect(laid.success, laid.error).to.equal(true);
       const res = ActionHandlers.handleDiscard(room, 'p1', room.playerHands.get('p1').find((x) => x.rank === 'K'));
       expect(res.success, res.error).to.equal(true);
-      expect(res.broadcast.kanoonPenalty).to.equal(undefined);
+      expect(res.broadcast.qanoonPenalty).to.equal(undefined);
       expect(room.teamTurnPenalty.get('p1')).to.equal(0);
     });
 
@@ -190,7 +190,7 @@ describe('#kanoon', () => {
     });
 
     it('plain pro-direct never charges', () => {
-      const { room, hand } = tookPile({ kanoon: false });
+      const { room, hand } = tookPile({ qanoon: false });
       ActionHandlers.handleDiscard(room, 'p1', hand[2]);
       expect(room.teamTurnPenalty.get('p1')).to.equal(0);
     });
@@ -198,7 +198,7 @@ describe('#kanoon', () => {
     it('the obligation dies with the turn', () => {
       const { room } = tookPile();
       room.nextTurn();
-      expect(room.kanoonPileTake).to.equal(null);
+      expect(room.qanoonPileTake).to.equal(null);
     });
   });
 
@@ -210,7 +210,7 @@ describe('#kanoon', () => {
       currentPlayerIndex: 0,
       ruleset: 'professional',
       professionalWellMode: 'direct',
-      kanoon: true,
+      qanoon: true,
       playerMelds: { 0: [], 1: [] },
       meldFlags: {},
       discardPile: [],
@@ -220,7 +220,7 @@ describe('#kanoon', () => {
 
     it('never opens a set while locked', () => {
       const ctx = bot._context(baseState());
-      expect(ctx.kanoonSetsLocked).to.equal(true);
+      expect(ctx.qanoonSetsLocked).to.equal(true);
       expect(bot._isLegalNewMeld([c('K', 'hearts'), c('K', 'diamonds'), c('K', 'clubs')], ctx)).to.equal(false);
       expect(bot._isLegalNewMeld(run('hearts', ['5', '6', '7']), ctx)).to.equal(true);
     });
@@ -233,7 +233,7 @@ describe('#kanoon', () => {
       });
       const ctx = bot._context(state);
       // K♠ only pairs into a KING SET, which is locked.
-      expect(bot._kanoonPileMeldable(state, ctx, state.discardPile, state.yourHand)).to.equal(false);
+      expect(bot._qanoonPileMeldable(state, ctx, state.discardPile, state.yourHand)).to.equal(false);
     });
 
     it('dead stock: declines a 2+ pile it could not meld (the take is a sure -100)', () => {
@@ -248,7 +248,7 @@ describe('#kanoon', () => {
       });
       expect(bot.decide(state).type).to.not.equal('pick_up_pile');
       // Plain pro-direct keeps taking it: on a dead stock it is the continuation.
-      expect(bot.decide({ ...state, kanoon: false }).type).to.equal('pick_up_pile');
+      expect(bot.decide({ ...state, qanoon: false }).type).to.equal('pick_up_pile');
     });
 
     it('judges the pile on the hand AFTER the take: a placement that strands it does not count', () => {
@@ -266,11 +266,11 @@ describe('#kanoon', () => {
         discardPile: [c('8', 'hearts')],
       });
       const ctx = bot._context(state);
-      expect(bot._kanoonPileMeldable(state, ctx, state.discardPile, state.yourHand)).to.equal(false);
+      expect(bot._qanoonPileMeldable(state, ctx, state.discardPile, state.yourHand)).to.equal(false);
       // With a second card in hand the same placement is safe.
       const roomier = { ...state, yourHand: [c('Q', 'clubs'), c('J', 'diamonds')] };
       expect(
-        bot._kanoonPileMeldable(roomier, bot._context(roomier), roomier.discardPile, roomier.yourHand)
+        bot._qanoonPileMeldable(roomier, bot._context(roomier), roomier.discardPile, roomier.yourHand)
       ).to.equal(true);
     });
 
@@ -279,7 +279,7 @@ describe('#kanoon', () => {
       const state = baseState({
         hasDrawnCard: true,
         yourHand: [c('5', 'hearts'), c('6', 'hearts'), c('Q', 'clubs'), c('J', 'diamonds'), c('4', 'spades'), taken],
-        kanoonPileCardIds: [String(taken.cardId)],
+        qanoonPileCardIds: [String(taken.cardId)],
       });
       const action = bot.decide(state);
       expect(action.type).to.equal('play_meld');

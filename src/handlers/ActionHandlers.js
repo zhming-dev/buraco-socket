@@ -214,11 +214,11 @@ class ActionHandlers {
     }
     const resolvedCard = taken.cards[0];
     room.playerHands.set(playerId, taken.remaining);
-    // KANOON rule 2 — judged on the hand as it stands after the thrown card has
+    // QANOON rule 2 — judged on the hand as it stands after the thrown card has
     // left it, and BEFORE the minimum-meld audit below can hand cards back: the
     // pile card the player did meld counts even if that audit later rolls the
     // meld back (it has its own consequence; this charge is for never trying).
-    const kanoonPenalty = this._applyKanoonPileCharge(room, playerId, resolvedCard);
+    const qanoonPenalty = this._applyQanoonPileCharge(room, playerId, resolvedCard);
     const toPile = resolvedCard && typeof resolvedCard.toJSON === 'function'
       ? resolvedCard
       : new Card(resolvedCard.suit, resolvedCard.rank, this._cardId(resolvedCard));
@@ -232,7 +232,7 @@ class ActionHandlers {
       type: 'card_discarded',
       playerIndex: player.playerIndex,
       card: resolvedCard,
-      ...(kanoonPenalty ? { kanoonPenalty } : {}),
+      ...(qanoonPenalty ? { qanoonPenalty } : {}),
       timestamp: new Date().toISOString(),
     };
 
@@ -329,12 +329,12 @@ class ActionHandlers {
   }
 
   /**
-   * KANOON rule 2: a seat that took the discard pile this turn must lay at least
+   * QANOON rule 2: a seat that took the discard pile this turn must lay at least
    * one of the taken cards before it discards; a discard that ends the turn with
    * every taken card still in hand (the one being thrown aside) charges the seat
-   * KANOON_PILE_CHARGE through the turn-penalty ledger — the same ledger the
+   * QANOON_PILE_CHARGE through the turn-penalty ledger — the same ledger the
    * round score, the voided-round total and the HUD already read, so no scoring
-   * path needs to know Kanoon exists. The discard itself stays legal: the rule
+   * path needs to know Qanoon exists. The discard itself stays legal: the rule
    * is a penalty, not a block. Runs on every discard path (manual and the turn
    * timeout's auto-discard both go through handleDiscard).
    * @param {GameRoom} room
@@ -342,10 +342,10 @@ class ActionHandlers {
    * @param {Object} discarded - the card that just left the hand
    * @returns {{value:number, reason:string, playerIndex:number}|null}
    */
-  static _applyKanoonPileCharge(room, playerId, discarded) {
-    const take = room.kanoonPileTake;
-    room.kanoonPileTake = null;
-    if (typeof room.isKanoon !== 'function' || !room.isKanoon()) return null;
+  static _applyQanoonPileCharge(room, playerId, discarded) {
+    const take = room.qanoonPileTake;
+    room.qanoonPileTake = null;
+    if (typeof room.isQanoon !== 'function' || !room.isQanoon()) return null;
     if (!take || take.playerId !== playerId || !Array.isArray(take.cardIds) || take.cardIds.length === 0) {
       return null;
     }
@@ -358,11 +358,11 @@ class ActionHandlers {
     );
     if (melded) return null;
 
-    const charge = this.KANOON_PILE_CHARGE;
+    const charge = this.QANOON_PILE_CHARGE;
     room.teamTurnPenalty.set(playerId, (room.teamTurnPenalty.get(playerId) || 0) + charge);
     const player = room.getPlayer(playerId);
     logger.info(
-      `[KANOON] ${playerId} discarded without melding a card from the pile taken this turn — charged ${charge}`
+      `[QANOON] ${playerId} discarded without melding a card from the pile taken this turn — charged ${charge}`
     );
     return {
       value: -charge,
@@ -1999,8 +1999,8 @@ class ActionHandlers {
    * Applies to the WINNING side too: going out does not excuse an unmet
    * obligation.
    */
-  /** KANOON rule 2: what a pile take that never reaches a meld costs the seat. */
-  static get KANOON_PILE_CHARGE() {
+  /** QANOON rule 2: what a pile take that never reaches a meld costs the seat. */
+  static get QANOON_PILE_CHARGE() {
     return 100;
   }
 

@@ -240,7 +240,7 @@ function tableAt(stream, at) {
     status: playing ? 'in_progress' : 'finished',
     maxPlayers: kf.maxPlayers || header.maxPlayers || players.length,
     ruleset,
-    kanoon: kf.kanoon === true,
+    qanoon: kf.qanoon === true,
     wellMode: kf.wellMode || null,
     cardsDealt: state.keyframe != null,
     inProgress: playing,

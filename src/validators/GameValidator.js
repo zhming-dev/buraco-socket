@@ -8,11 +8,11 @@
 // malicious — reject it before doing per-card work.
 const MAX_MELD_CARDS = 30;
 
-// KANOON rule 1: a meld of this length is a buraco (brazilia), the key that
+// QANOON rule 1: a meld of this length is a buraco (brazilia), the key that
 // unlocks SETS for its side. Same bar as ActionHandlers._teamHasAnyBrazilia.
 const BURACO_SIZE = 7;
-const KANOON_SET_LOCKED_ERROR =
-  'Kanoon: sets of the same rank are locked until your side has a buraco';
+const QANOON_SET_LOCKED_ERROR =
+  'Qanoon: sets of the same rank are locked until your side has a buraco';
 
 class GameValidator {
   /**
@@ -117,15 +117,15 @@ class GameValidator {
     if (!this._isValidSequence(resolved, ruleset) && !this._isValidSet(resolved, ruleset)) {
       return { isValid: false, error: 'Invalid meld: not a valid sequence or set' };
     }
-    if (this._isSetOnly(resolved, ruleset) && this._kanoonSetLocked(room, playerId)) {
-      return { isValid: false, error: KANOON_SET_LOCKED_ERROR, reason: 'kanoonSetLocked' };
+    if (this._isSetOnly(resolved, ruleset) && this._qanoonSetLocked(room, playerId)) {
+      return { isValid: false, error: QANOON_SET_LOCKED_ERROR, reason: 'qanoonSetLocked' };
     }
 
     return { isValid: true };
   }
 
   /**
-   * KANOON rule 1 — a SET (same-rank meld, the 2-2-2 set included) may not be
+   * QANOON rule 1 — a SET (same-rank meld, the 2-2-2 set included) may not be
    * laid while the actor's side owns no buraco. `alsoLaying` are the other
    * melds going down in the SAME action: a going-down that lays a 7-card run
    * next to a set is one legal move, the run unlocks the set it travels with.
@@ -136,8 +136,8 @@ class GameValidator {
    * @param {Array<Array>} [alsoLaying]
    * @returns {boolean}
    */
-  static _kanoonSetLocked(room, playerId, alsoLaying = []) {
-    if (!room || typeof room.isKanoon !== 'function' || !room.isKanoon()) return false;
+  static _qanoonSetLocked(room, playerId, alsoLaying = []) {
+    if (!room || typeof room.isQanoon !== 'function' || !room.isQanoon()) return false;
     const owned = this._teamMelds(room, playerId).some(
       (m) => Array.isArray(m) && m.length >= BURACO_SIZE
     );
@@ -148,7 +148,7 @@ class GameValidator {
   /**
    * A meld that is legal ONLY as a set. A 3-card group can read both ways (e.g.
    * two naturals of one suit around a wild); when it is also a valid run it is
-   * a run, and Kanoon lets it through.
+   * a run, and Qanoon lets it through.
    */
   static _isSetOnly(cards, ruleset = 'classic') {
     return !this._isValidSequence(cards, ruleset) && this._isValidSet(cards, ruleset);
@@ -499,9 +499,9 @@ class GameValidator {
 
     if (
       resolvedMelds.some((m) => this._isSetOnly(m, ruleset)) &&
-      this._kanoonSetLocked(room, playerId, resolvedMelds)
+      this._qanoonSetLocked(room, playerId, resolvedMelds)
     ) {
-      return { isValid: false, error: KANOON_SET_LOCKED_ERROR, reason: 'kanoonSetLocked' };
+      return { isValid: false, error: QANOON_SET_LOCKED_ERROR, reason: 'qanoonSetLocked' };
     }
 
     // Minimum points requirement for the opening meld — scored on what will
@@ -1117,4 +1117,4 @@ class GameValidator {
 
 module.exports = GameValidator;
 module.exports.BURACO_SIZE = BURACO_SIZE;
-module.exports.KANOON_SET_LOCKED_ERROR = KANOON_SET_LOCKED_ERROR;
+module.exports.QANOON_SET_LOCKED_ERROR = QANOON_SET_LOCKED_ERROR;

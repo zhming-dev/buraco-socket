@@ -8,7 +8,7 @@
  * Covers the shapes the recorder has to get right without being told: melds
  * and go-downs, pile takes, auto-taken wells, minimum-meld confiscations,
  * timeout auto-draw/auto-discard (incl. returned melds), stock promotion from
- * a well, multi-round matches (a keyframe per deal), 2v2 and Kanoon.
+ * a well, multi-round matches (a keyframe per deal), 2v2 and Qanoon.
  */
 /* eslint-env mocha */
 const { expect } = require('chai');
@@ -31,7 +31,7 @@ function fakeIo() {
   };
 }
 
-function setupTable({ roomId, seats = 2, ruleset = 'classic', wellMode = 'indirect', kanoon = false, targetScore = 0 }) {
+function setupTable({ roomId, seats = 2, ruleset = 'classic', wellMode = 'indirect', qanoon = false, targetScore = 0 }) {
   const service = new GameService();
   const handlers = new SocketHandlers(fakeIo(), service);
   service.createRoom(roomId, seats);
@@ -42,7 +42,7 @@ function setupTable({ roomId, seats = 2, ruleset = 'classic', wellMode = 'indire
   const room = service.getRoom(roomId);
   room.ruleset = ruleset;
   room.professionalWellMode = wellMode;
-  if (kanoon) room.setKanoon(true);
+  if (qanoon) room.setQanoon(true);
   room.targetScore = targetScore;
   room.turnTimeLimit = 30;
   const coord = new BotCoordinator({
@@ -158,7 +158,7 @@ describe('replay round trip (real handlers, bot-driven games)', function () {
     { name: '1v1 classic', roomId: 'rt-classic', seats: 2, ruleset: 'classic' },
     { name: '1v1 pro direct', roomId: 'rt-pro-direct', seats: 2, ruleset: 'professional', wellMode: 'direct' },
     { name: '2v2 pro indirect', roomId: 'rt-2v2', seats: 4, ruleset: 'professional', wellMode: 'indirect' },
-    { name: '1v1 kanoon', roomId: 'rt-kanoon', seats: 2, kanoon: true },
+    { name: '1v1 qanoon', roomId: 'rt-qanoon', seats: 2, qanoon: true },
   ];
 
   for (const c of cases) {

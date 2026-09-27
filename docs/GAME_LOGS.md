@@ -53,7 +53,7 @@ In the stored stream `playerId` is dropped when `seat` already names the player
 | `meld` | `cards[], meldIndex, isBuraco, grade, hand, pozzettoTaken?` |
 | `go_down` | `melds[][], hand, pozzettoTaken?` |
 | `add_to_meld` | `cards[], targetSeat, targetMeldIndex, hand, pozzettoTaken?` |
-| `discard` | `card, hand, nextSeat, pozzettoTaken?, minimumMeldFailed?, kanoonPenalty?, auto?, meldsReturned?, returnedCards?` |
+| `discard` | `card, hand, nextSeat, pozzettoTaken?, minimumMeldFailed?, qanoonPenalty?, auto?, meldsReturned?, returnedCards?` |
 | `take_pozzetto` | `cards[] (the well), hand` |
 | `stock_promoted` | `well` (index), `deck` — an empty stock took a well in as the new stock |
 | `timeout` | `connected, isBot` |
@@ -94,7 +94,7 @@ so its stock order is the one play starts from) and when a stream is opened
 mid-round after a restart (`resume`):
 
 ```
-{ reason, round, ruleset, wellMode, kanoon, maxPlayers, targetScore, turn, turnOrder,
+{ reason, round, ruleset, wellMode, qanoon, maxPlayers, targetScore, turn, turnOrder,
   seats: [{seat, id, name, bot}],
   firstTurn: { winner, rounds: [[[seat, "QH#12"], ...], ...] } | null,
   cum: {teamA, teamB},          // cumulative scores entering the round

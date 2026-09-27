@@ -669,12 +669,12 @@ class BotCoordinator {
       meldedThisTurn: room.meldedThisTurn === true,
       ruleset,
       professionalWellMode: room.professionalWellMode || 'indirect',
-      // KANOON: sets locked until the side has a buraco; a pile take must reach
-      // a meld before the discard. kanoonPileCardIds are THIS bot's taken cards.
-      kanoon: typeof room.isKanoon === 'function' && room.isKanoon(),
-      kanoonPileCardIds:
-        room.kanoonPileTake && room.kanoonPileTake.playerId === player.playerId
-          ? room.kanoonPileTake.cardIds.slice()
+      // QANOON: sets locked until the side has a buraco; a pile take must reach
+      // a meld before the discard. qanoonPileCardIds are THIS bot's taken cards.
+      qanoon: typeof room.isQanoon === 'function' && room.isQanoon(),
+      qanoonPileCardIds:
+        room.qanoonPileTake && room.qanoonPileTake.playerId === player.playerId
+          ? room.qanoonPileTake.cardIds.slice()
           : [],
       yourHand: hand.map((card) => this._serializeCard(card)),
       playerMelds,

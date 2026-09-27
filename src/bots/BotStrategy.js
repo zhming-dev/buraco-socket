@@ -64,8 +64,8 @@ class BotStrategy {
       return { type: 'wait' };
     }
 
-    if (ctx.kanoonPendingIds.length) {
-      const owed = this._kanoonMeldPending(state, ctx, hand);
+    if (ctx.qanoonPendingIds.length) {
+      const owed = this._qanoonMeldPending(state, ctx, hand);
       if (owed) return owed;
     }
 
@@ -171,18 +171,18 @@ class BotStrategy {
       discardLock: state.discardLock || null,
     };
 
-    // KANOON (1v1 variant on top of pro-direct). Two extra gates:
-    //   kanoonSetsLocked  — no NEW set until our side owns a buraco;
-    //   kanoonPendingIds  — cards this bot took off the pile this turn; while
+    // QANOON (1v1 variant on top of pro-direct). Two extra gates:
+    //   qanoonSetsLocked  — no NEW set until our side owns a buraco;
+    //   qanoonPendingIds  — cards this bot took off the pile this turn; while
     //                       none of them is in a meld, the discard costs 100.
-    ctx.kanoon = state.kanoon === true;
-    ctx.kanoonSetsLocked = ctx.kanoon && !ctx.hasBrazilia;
-    ctx.kanoonPendingIds = [];
-    if (ctx.kanoon && Array.isArray(state.kanoonPileCardIds) && state.kanoonPileCardIds.length) {
+    ctx.qanoon = state.qanoon === true;
+    ctx.qanoonSetsLocked = ctx.qanoon && !ctx.hasBrazilia;
+    ctx.qanoonPendingIds = [];
+    if (ctx.qanoon && Array.isArray(state.qanoonPileCardIds) && state.qanoonPileCardIds.length) {
       const handIds = new Set((state.yourHand || []).map((c) => String(this._cardIdOf(c))));
-      const ids = state.kanoonPileCardIds.map(String);
+      const ids = state.qanoonPileCardIds.map(String);
       // Satisfied the moment one taken card has left the hand (into a meld).
-      if (ids.every((id) => handIds.has(id))) ctx.kanoonPendingIds = ids;
+      if (ids.every((id) => handIds.has(id))) ctx.qanoonPendingIds = ids;
     }
 
     // Public information parity: hand COUNTS are already broadcast to every
@@ -338,15 +338,15 @@ class BotStrategy {
     // ends (~5% of simulated rounds deadlocked exactly there). Keep declining
     // that, and let the endRoundOnDeckOut breaker promote the well as before —
     // it stays the last-resort net, it is simply no longer the ordinary path.
-    // KANOON: a pile none of whose cards can reach a meld is a certain
+    // QANOON: a pile none of whose cards can reach a meld is a certain
     // 100-point charge. On a dead stock it is still not the only move — the
     // decline (draw -> well promotion, or the deck-out end below) is the same
     // exit this branch already uses for a lone card — so it is never worth it.
-    const kanoonTakeOk =
-      !ctx.kanoon || this._kanoonPileMeldable(state, ctx, discardPile, state.yourHand || []);
+    const qanoonTakeOk =
+      !ctx.qanoon || this._qanoonPileMeldable(state, ctx, discardPile, state.yourHand || []);
 
     if (pozzettoAvailable) {
-      if (!squeezeBlocked && discardPile.length >= 2 && kanoonTakeOk) {
+      if (!squeezeBlocked && discardPile.length >= 2 && qanoonTakeOk) {
         return { type: 'pick_up_pile' };
       }
       return { type: 'draw_card', fromDeck: true };
@@ -355,7 +355,7 @@ class BotStrategy {
     // Dead stock and no untaken pozzetto: taking the discard pile is the only
     // way to continue at all (see the deck-exhaustion rule), so take a pile with
     // real material in it even when the valuation above was lukewarm.
-    if (!squeezeBlocked && discardPile.length >= 2 && kanoonTakeOk) {
+    if (!squeezeBlocked && discardPile.length >= 2 && qanoonTakeOk) {
       return { type: 'pick_up_pile' };
     }
 
@@ -377,9 +377,9 @@ class BotStrategy {
     const pile = ctx.discardPile;
     const ownMelds = ctx.ownMelds;
 
-    // KANOON: a take whose cards cannot reach a meld THIS turn is a certain
+    // QANOON: a take whose cards cannot reach a meld THIS turn is a certain
     // 100-point charge, so it is never worth it, however rich the pile.
-    if (ctx.kanoon && !this._kanoonPileMeldable(state, ctx, pile, hand)) return false;
+    if (ctx.qanoon && !this._qanoonPileMeldable(state, ctx, pile, hand)) return false;
 
     // Top card extends one of our melds — always worth it, with ONE exception.
     for (const entry of ownMelds) {
@@ -872,7 +872,7 @@ class BotStrategy {
 
   _findBestNewMeld(state, ctx, hand, opts = {}) {
     let candidates = [
-      ...(ctx.kanoonSetsLocked ? [] : this._findSetMelds(hand, ctx)),
+      ...(ctx.qanoonSetsLocked ? [] : this._findSetMelds(hand, ctx)),
       ...this._findSequenceMelds(hand, ctx),
     ].filter((entry) => this._isLegalNewMeld(entry.cards, ctx));
 
@@ -1148,13 +1148,13 @@ class BotStrategy {
   }
 
   /**
-   * Legal as a NEW meld: _isLegalMeld plus the Kanoon set lock (a group that is
+   * Legal as a NEW meld: _isLegalMeld plus the Qanoon set lock (a group that is
    * only valid as a set may not open while our side has no buraco). Extending an
    * existing meld keeps using _isLegalMeld — no set can exist on a locked side.
    */
   _isLegalNewMeld(cards, ctx) {
     if (this._isValidSequence(cards, ctx)) return true;
-    if (ctx.kanoonSetsLocked) return false;
+    if (ctx.qanoonSetsLocked) return false;
     return this._isValidSet(cards, ctx);
   }
 
@@ -1165,15 +1165,15 @@ class BotStrategy {
   }
 
   /**
-   * KANOON pile gate: can at least one card of `pile` go into a meld this turn —
+   * QANOON pile gate: can at least one card of `pile` go into a meld this turn —
    * onto an own meld, or into a new meld with cards in hand — WITHOUT stranding
    * the hand? Judged on the hand as it will be after the take (hand + pile),
    * through the same _safeToShed the post-take placement is held to: a
-   * placement that is legal but unsafe is refused by _kanoonMeldPending, and a
+   * placement that is legal but unsafe is refused by _qanoonMeldPending, and a
    * take that leads there is a certain 100-point charge. (A deep-check sim
    * found half the stock-alive charges came from exactly that gap.)
    */
-  _kanoonPileMeldable(state, ctx, pile, hand) {
+  _qanoonPileMeldable(state, ctx, pile, hand) {
     const afterTake = [...(hand || []), ...(pile || [])];
     for (const card of pile || []) {
       for (const entry of ctx.ownMelds) {
@@ -1189,7 +1189,7 @@ class BotStrategy {
           return true;
         }
       }
-      const meld = this._kanoonNewMeldWith(state, ctx, card, afterTake);
+      const meld = this._qanoonNewMeldWith(state, ctx, card, afterTake);
       if (
         meld &&
         this._safeToShed(state, ctx, this._handWithout(afterTake, meld.cards), {
@@ -1205,10 +1205,10 @@ class BotStrategy {
   }
 
   /** A legal new meld drawn from `card` + `hand` that contains `card`, or null. */
-  _kanoonNewMeldWith(state, ctx, card, hand) {
+  _qanoonNewMeldWith(state, ctx, card, hand) {
     const pool = [card, ...hand.filter((c) => !this._sameCard(c, card))];
     const candidates = [
-      ...(ctx.kanoonSetsLocked ? [] : this._findSetMelds(pool, ctx)),
+      ...(ctx.qanoonSetsLocked ? [] : this._findSetMelds(pool, ctx)),
       ...this._findSequenceMelds(pool, ctx),
     ].filter(
       (entry) =>
@@ -1224,13 +1224,13 @@ class BotStrategy {
   }
 
   /**
-   * KANOON: the pile was taken this turn and nothing from it is in a meld yet.
+   * QANOON: the pile was taken this turn and nothing from it is in a meld yet.
    * Lay one of the taken cards before anything else — onto an own meld first
    * (cheapest, keeps the hand's material), else in a new meld. Null when no
    * taken card fits anywhere (the charge is then unavoidable; play on normally).
    */
-  _kanoonMeldPending(state, ctx, hand) {
-    const pending = new Set(ctx.kanoonPendingIds);
+  _qanoonMeldPending(state, ctx, hand) {
+    const pending = new Set(ctx.qanoonPendingIds);
     const owed = hand.filter((c) => pending.has(String(this._cardIdOf(c))));
     for (const card of owed) {
       for (const entry of ctx.ownMelds) {
@@ -1254,7 +1254,7 @@ class BotStrategy {
       }
     }
     for (const card of owed) {
-      const meld = this._kanoonNewMeldWith(state, ctx, card, hand);
+      const meld = this._qanoonNewMeldWith(state, ctx, card, hand);
       if (
         meld &&
         this._safeToShed(state, ctx, this._handWithout(hand, meld.cards), {
