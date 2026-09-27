@@ -236,6 +236,44 @@ describe('#kanoon', () => {
       expect(bot._kanoonPileMeldable(state, ctx, state.discardPile, state.yourHand)).to.equal(false);
     });
 
+    it('dead stock: declines a 2+ pile it could not meld (the take is a sure -100)', () => {
+      const state = baseState({
+        hasDrawnCard: false,
+        deckCount: 0,
+        pozzettosAvailable: false,
+        deadPileCounts: [],
+        yourHand: [c('K', 'hearts'), c('4', 'clubs'), c('7', 'diamonds')],
+        // K♠ only pairs into a (locked) king set; 9♦ needs the missing 8♦.
+        discardPile: [c('K', 'spades'), c('9', 'diamonds')],
+      });
+      expect(bot.decide(state).type).to.not.equal('pick_up_pile');
+      // Plain pro-direct keeps taking it: on a dead stock it is the continuation.
+      expect(bot.decide({ ...state, kanoon: false }).type).to.equal('pick_up_pile');
+    });
+
+    it('judges the pile on the hand AFTER the take: a placement that strands it does not count', () => {
+      // Hand [Q♣] + pile [8♥]: the 8♥ legally extends 5♥-6♥-7♥, but that leaves
+      // Q♣ alone and direct never closes on a discard — the placement would be
+      // refused, the take a sure charge.
+      const run567 = run('hearts', ['5', '6', '7']);
+      const state = baseState({
+        hasDrawnCard: false,
+        deckCount: 30,
+        pozzettosAvailable: true,
+        deadPileCounts: [11, 11],
+        playerMelds: { 0: [run567], 1: [] },
+        yourHand: [c('Q', 'clubs')],
+        discardPile: [c('8', 'hearts')],
+      });
+      const ctx = bot._context(state);
+      expect(bot._kanoonPileMeldable(state, ctx, state.discardPile, state.yourHand)).to.equal(false);
+      // With a second card in hand the same placement is safe.
+      const roomier = { ...state, yourHand: [c('Q', 'clubs'), c('J', 'diamonds')] };
+      expect(
+        bot._kanoonPileMeldable(roomier, bot._context(roomier), roomier.discardPile, roomier.yourHand)
+      ).to.equal(true);
+    });
+
     it('after a take, lays a taken card before anything else', () => {
       const taken = c('7', 'hearts');
       const state = baseState({

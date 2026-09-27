@@ -338,8 +338,15 @@ class BotStrategy {
     // ends (~5% of simulated rounds deadlocked exactly there). Keep declining
     // that, and let the endRoundOnDeckOut breaker promote the well as before —
     // it stays the last-resort net, it is simply no longer the ordinary path.
+    // KANOON: a pile none of whose cards can reach a meld is a certain
+    // 100-point charge. On a dead stock it is still not the only move — the
+    // decline (draw -> well promotion, or the deck-out end below) is the same
+    // exit this branch already uses for a lone card — so it is never worth it.
+    const kanoonTakeOk =
+      !ctx.kanoon || this._kanoonPileMeldable(state, ctx, discardPile, state.yourHand || []);
+
     if (pozzettoAvailable) {
-      if (!squeezeBlocked && discardPile.length >= 2) {
+      if (!squeezeBlocked && discardPile.length >= 2 && kanoonTakeOk) {
         return { type: 'pick_up_pile' };
       }
       return { type: 'draw_card', fromDeck: true };
@@ -348,7 +355,7 @@ class BotStrategy {
     // Dead stock and no untaken pozzetto: taking the discard pile is the only
     // way to continue at all (see the deck-exhaustion rule), so take a pile with
     // real material in it even when the valuation above was lukewarm.
-    if (!squeezeBlocked && discardPile.length >= 2) {
+    if (!squeezeBlocked && discardPile.length >= 2 && kanoonTakeOk) {
       return { type: 'pick_up_pile' };
     }
 
@@ -1159,14 +1166,40 @@ class BotStrategy {
 
   /**
    * KANOON pile gate: can at least one card of `pile` go into a meld this turn —
-   * onto an own meld, or into a new meld with cards already in hand?
+   * onto an own meld, or into a new meld with cards in hand — WITHOUT stranding
+   * the hand? Judged on the hand as it will be after the take (hand + pile),
+   * through the same _safeToShed the post-take placement is held to: a
+   * placement that is legal but unsafe is refused by _kanoonMeldPending, and a
+   * take that leads there is a certain 100-point charge. (A deep-check sim
+   * found half the stock-alive charges came from exactly that gap.)
    */
   _kanoonPileMeldable(state, ctx, pile, hand) {
+    const afterTake = [...(hand || []), ...(pile || [])];
     for (const card of pile || []) {
-      if (ctx.ownMelds.some((entry) => this._canAddCardsToMeld(entry.cards, [card], ctx))) {
+      for (const entry of ctx.ownMelds) {
+        if (!this._canAddCardsToMeld(entry.cards, [card], ctx)) continue;
+        const grown = [...entry.cards, card];
+        if (
+          this._safeToShed(state, ctx, this._handWithout(afterTake, [card]), {
+            actionMakesBrazilia: entry.cards.length < BRAZILIA_SIZE && grown.length >= BRAZILIA_SIZE,
+            resultingMeld: grown,
+            meldOwnedBySelf: entry.isOwn === true,
+          })
+        ) {
+          return true;
+        }
+      }
+      const meld = this._kanoonNewMeldWith(state, ctx, card, afterTake);
+      if (
+        meld &&
+        this._safeToShed(state, ctx, this._handWithout(afterTake, meld.cards), {
+          actionMakesBrazilia: meld.cards.length >= BRAZILIA_SIZE,
+          resultingMeld: meld.cards,
+          meldOwnedBySelf: true,
+        })
+      ) {
         return true;
       }
-      if (this._kanoonNewMeldWith(state, ctx, card, hand)) return true;
     }
     return false;
   }
