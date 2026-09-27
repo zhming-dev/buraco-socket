@@ -8789,8 +8789,14 @@ class SocketHandlers {
       // be extended indefinitely. Only arm if no timer is live at all (which
       // would otherwise be the reported freeze), and never grant more than the
       // slice that was already left on the clock.
+      //
+      // NOT during the opening deal: there "no timer is live" is the deal gate
+      // working as designed (the first turn's clock waits for every seat's
+      // deal_animation_complete, or DEAL_ANIMATION_FALLBACK_MS). Arming here
+      // dropped that gate and started the first player's clock behind the deal
+      // — a refused discard stole the real time the gate exists to protect.
       this._sendGameStateUpdate(room);
-      if (!room.turnTimerTickHandle) {
+      if (!room.turnTimerTickHandle && !room.awaitingDealAnimation) {
         const remainingMs = room.turnTimerDeadline
           ? Math.max(0, room.turnTimerDeadline - Date.now())
           : undefined;
@@ -10181,6 +10187,47 @@ class SocketHandlers {
   }
 
   /**
+   * Announce the card a turn TIMEOUT drew for a seat.
+   *
+   * The seat that drew is told WHICH card it got — the same `toPlayer` shape a
+   * manual draw sends — and everyone else gets the hidden `card: null` one. This
+   * used to be a single `card: null` broadcast to the whole room, owner included,
+   * so the owner's board flew a card into a hand that never received it; and
+   * because the timeout then prefers throwing back exactly that card (the player
+   * never chose to keep it), the owner's board had nothing in the hand to throw.
+   * On the timed-out player's own screen neither the take nor the throw
+   * happened. It shows on the FIRST turn of a hand because that is the turn a
+   * player most often lets run out before touching the table — once they have
+   * drawn by hand the timeout only throws a card that is already in the hand.
+   *
+   * A bot, or a seat with no live socket, has no one to tell: the room hears the
+   * hidden draw once, as before.
+   * @param {import('../models/GameRoom')} room
+   * @param {import('../models/PlayerSession')} player the seat that drew
+   * @param {Object} card the drawn card
+   */
+  _emitTimeoutDraw(room, player, card) {
+    const frame = {
+      type: 'card_drawn',
+      playerIndex: room.currentTurn,
+      fromDeck: true,
+      autoAdvance: true,
+      timestamp: new Date().toISOString(),
+    };
+    const ownSocket =
+      player && player.isBot !== true && player.socketId
+        ? this.io.sockets?.sockets?.get(player.socketId)
+        : null;
+    if (!ownSocket) {
+      this.io.to(room.roomId).emit(SocketEvents.CARD_DRAWN, { ...frame, card: null });
+      return;
+    }
+    const revealed = card && typeof card.toJSON === 'function' ? card.toJSON() : card;
+    ownSocket.emit(SocketEvents.CARD_DRAWN, { ...frame, card: revealed });
+    ownSocket.to(room.roomId).emit(SocketEvents.CARD_DRAWN, { ...frame, card: null });
+  }
+
+  /**
    * PTW-235 / Bug4a: pause the active turn timer because the current player
    * disconnected and is within their reconnect grace window. The time that was
    * left is captured so a reconnect can re-arm with the remaining slice. NO
@@ -10345,14 +10392,7 @@ class SocketHandlers {
             deck: room.deck?.count ?? null,
             auto: true,
           });
-          this.io.to(room.roomId).emit(SocketEvents.CARD_DRAWN, {
-            type: 'card_drawn',
-            playerIndex: room.currentTurn,
-            card: null, // hidden for others
-            fromDeck: true,
-            autoAdvance: true,
-            timestamp: new Date().toISOString(),
-          });
+          this._emitTimeoutDraw(room, currentPlayer, drawnCard);
         }
       }
     }
