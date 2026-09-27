@@ -56,14 +56,14 @@
   main { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; padding: 16px 20px; align-items: start; }
   @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
   /* ---- sidebar: game list ---- */
-  .sidebar { position: sticky; top: 64px; max-height: calc(100vh - 80px); overflow-y: auto; }
+  .sidebar { position: sticky; top: 64px; max-height: calc(100vh - 80px); overflow-y: auto; overflow-x: hidden; }
   .room-item { display: block; width: 100%; text-align: left; background: transparent; border: 0; border-radius: 10px; padding: 10px 12px; margin-bottom: 4px; cursor: pointer; color: var(--text); font: inherit; }
   .room-item:hover { background: var(--panel); filter: none; }
   .room-item.selected { background: var(--panel); box-shadow: inset 3px 0 0 var(--accent); }
   .room-item .r1 { display: flex; align-items: center; gap: 8px; }
   .room-item .rid { font-family: var(--mono); font-size: 12.5px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .room-item .r2 { font-size: 12.5px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .room-item .r3 { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  .room-item .r3 { font-size: 11.5px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
   .room-item.ended { opacity: .8; }
   .side-h { font-size: 13px; color: var(--muted); margin: 18px 0 8px 12px; display: flex; align-items: center; gap: 8px; }
   .side-h:first-child { margin-top: 0; }
@@ -376,6 +376,16 @@
   .logview.human .ev .seat { color: var(--muted); font-size: 12px; }
   .logview.human .divider { display: flex; align-items: center; gap: 10px; color: #9dbdff; font-size: 12px; padding: 8px 4px 2px; }
   .logview.human .divider::before, .logview.human .divider::after { content: ''; flex: 1; border-top: 1px solid rgba(79,140,255,.25); }
+  /* ---- replay (Table tab) ---- */
+  .replaybar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; background: var(--panel2); border-radius: 12px; padding: 8px 10px; margin-bottom: 8px; }
+  .replaybar .rb-title { font-family: var(--mono); font-size: 12px; color: var(--muted); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .replaybar input[type=range] { flex: 1; min-width: 160px; accent-color: var(--accent); }
+  .replaybar .rb-pos { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 96px; text-align: right; }
+  .replaybar select { padding: 4px 8px; font-size: 12px; }
+  .rb-event { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 30px; font-size: 13px; padding: 2px 6px 10px; }
+  .rb-event .ic { width: 20px; text-align: center; }
+  .rb-event .fan { display: inline-flex; gap: 2px; vertical-align: middle; }
+  .rb-event .seq { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -396,6 +406,8 @@
   <aside class="sidebar">
     <div class="side-h">Games <span class="hint dim" id="rooms-refresh"></span></div>
     <div id="rooms-list"><div class="empty">Connect to see games</div></div>
+    <div class="side-h">Replays <span class="hint" id="replays-count"></span></div>
+    <div id="replay-list"><div class="empty">—</div></div>
     <div class="side-h">Finished</div>
     <div id="ended-list"><div class="empty">—</div></div>
   </aside>
@@ -405,6 +417,7 @@
       <div class="ws-head">
         <span class="room-id" id="ws-room-id">—</span>
         <button class="small ghost" id="btn-copy-id" title="copy room id" disabled>copy</button>
+        <button class="small" id="btn-replay" title="replay this room's latest match from the deal" disabled>Replay</button>
         <button class="small danger" id="btn-close-game" title="kick everyone out and delete this game" disabled>Close game</button>
         <div class="spacer"></div>
         <label class="chk" title="stop refreshing the table">
@@ -419,6 +432,26 @@
       <div class="tab-pane active" id="pane-detail">
         <div class="empty" id="detail-empty">Pick a game</div>
         <div id="detail-body" style="display:none">
+          <div class="replaybar" id="replaybar" style="display:none">
+            <span class="badge tiny neutral" id="rb-live">replay</span>
+            <span class="rb-title" id="rb-title"></span>
+            <select id="rb-round" title="jump to a round"></select>
+            <button class="small" id="rb-first" title="start of this round">⏮</button>
+            <button class="small" id="rb-prev" title="previous event (←)">◀</button>
+            <button class="small primary" id="rb-play" title="play / pause (space)">▶</button>
+            <button class="small" id="rb-next" title="next event (→)">▶▏</button>
+            <button class="small" id="rb-last" title="last event">⏭</button>
+            <input type="range" id="rb-slider" min="0" max="0" value="0" title="scrub through the match">
+            <select id="rb-speed" title="playback speed">
+              <option value="1400">slow</option>
+              <option value="650" selected>normal</option>
+              <option value="220">fast</option>
+            </select>
+            <span class="rb-pos" id="rb-pos"></span>
+            <button class="small ghost" id="rb-download" title="download the event stream (JSON)">JSON</button>
+            <button class="small" id="rb-exit" title="back to the live table">Exit replay</button>
+          </div>
+          <div class="rb-event" id="rb-event" style="display:none"></div>
           <div class="lobby" id="lobby" style="display:none"></div>
           <div class="board-wrap" id="board-wrap"><div class="board" id="board"></div></div>
           <div class="board-note" id="board-note"></div>
@@ -582,6 +615,22 @@
     });
   }
 
+  // Downloads go through fetch() so the secret stays in the header (the
+  // server no longer accepts it as a query parameter).
+  function download(path, filename) {
+    return fetch(path, { headers: { 'x-webhook-secret': secret } }).then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.blob();
+    }).then(function (blob) {
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    }).catch(function (e) { toast('Download failed: ' + e.message, true); });
+  }
+
   function postJson(path, payload) {
     return api(path, {
       method: 'POST',
@@ -628,6 +677,20 @@
   }
 
   function cardKey(c) { return c.cardId != null ? 'id:' + c.cardId : cardLabel(c); }
+
+  // Game events carry cards as compact refs, "QH#123" / "10S#7" / "JK#5"
+  // (server: observability/replayCodec.cardRef). Older log lines carried
+  // {suit, rank, cardId} objects; both are accepted.
+  var SUIT_OF = { H: 'hearts', D: 'diamonds', C: 'clubs', S: 'spades' };
+  function toCard(x) {
+    if (!x || typeof x !== 'string') return x;
+    var hash = x.indexOf('#');
+    var code = hash === -1 ? x : x.slice(0, hash);
+    var id = hash === -1 ? null : x.slice(hash + 1);
+    if (id != null && /^-?\d+$/.test(id)) id = Number(id);
+    if (code === 'JK') return { cardId: id, suit: 'joker', rank: 'joker', isJoker: true };
+    return { cardId: id, suit: SUIT_OF[code.slice(-1)] || '?', rank: code.slice(0, -1), isJoker: false };
+  }
 
   // A card face: rank top-left, suit bottom-right, red suits red, joker gold.
   function cardFace(c, cls) {
@@ -926,23 +989,31 @@
         item.appendChild(r1);
         item.appendChild(el('div', 'r3'));
         item.onclick = function () {
-          selectRoom(item.dataset.roomId);
-          showTab('logs');
-          gameLogs.open(item.dataset.roomId);
+          var id = item.dataset.roomId;
+          selectRoom(id, { noLoad: true });
+          gameLogs.open(id, { quiet: true });
+          // A finished game with a recorded match opens as a replay on the
+          // table; one that never dealt (a lobby) only has its story.
+          replay.openLatestForRoom(id).then(function (opened) {
+            showTab(opened ? 'detail' : 'logs');
+          });
         };
         list.appendChild(item);
       }
       item.classList.toggle('selected', r.roomId === selectedRoomId);
-      setText(item.querySelector('.r3'), plural(r.count || 0, 'line') + (r.errors ? ' · ' + plural(r.errors, 'error') : '') + (r.warns ? ' · ' + plural(r.warns, 'warning') : '') + ' · ' + fmtTime(r.lastAt).slice(0, 8));
+      setText(item.querySelector('.r3'), (r.onDisk ? 'on disk' : plural(r.count || 0, 'line')) + (r.errors ? ' · ' + plural(r.errors, 'error') : '') + (r.warns ? ' · ' + plural(r.warns, 'warning') : '') + ' · ' + fmtTime(r.lastAt).slice(0, 8));
     });
     Array.prototype.slice.call(list.querySelectorAll('.room-item')).forEach(function (it) { if (!seen[it.dataset.roomId]) list.removeChild(it); });
   }
 
-  function selectRoom(roomId) {
+  function selectRoom(roomId, opts) {
+    opts = opts || {};
     var changed = roomId !== selectedRoomId;
+    if (changed && replay.active()) replay.exit({ quiet: true });
     selectedRoomId = roomId;
     setText($('ws-room-id'), roomId || '—');
     $('btn-copy-id').disabled = !roomId;
+    $('btn-replay').disabled = !roomId;
     $('btn-close-game').disabled = true; // re-enabled once the live detail loads
     document.querySelectorAll('.room-item').forEach(function (it) {
       it.classList.toggle('selected', it.dataset.roomId === roomId);
@@ -956,8 +1027,8 @@
       $('board-note').innerHTML = '';
       $('detail-empty').textContent = 'loading…';
     }
-    if (roomId) loadDetail(true);
-    else clearDetail();
+    if (roomId && !opts.noLoad) loadDetail(true);
+    else if (!roomId || changed) clearDetail();
   }
 
   function clearDetail() {
@@ -1021,7 +1092,11 @@
     board.style.setProperty('--u', boardU + 'px');
   }
   if (window.ResizeObserver) {
-    new ResizeObserver(function () { measureBoard(); if (lastDetail) renderBoard(lastDetail); }).observe(board);
+    new ResizeObserver(function () {
+      measureBoard();
+      var d = (typeof replay !== 'undefined' && replay && replay.active()) ? replay.detail() : lastDetail;
+      if (d) renderBoard(d);
+    }).observe(board);
   }
 
   // world → px
@@ -1031,6 +1106,7 @@
 
   function loadDetail(force) {
     if (!selectedRoomId) return;
+    if (replay.active()) return; // the table shows the replay, not the live room
     if (!force && $('detail-pause').checked) return;
     var roomId = selectedRoomId;
     api('/dev/api/rooms/' + encodeURIComponent(roomId)).then(function (d) {
@@ -1575,6 +1651,7 @@
 
   function onCardClick(node) {
     var cid = node.dataset.cid;
+    if (replay.active()) return; // a replayed table is read-only
     if (!cid || !lastDetail) return;
     var where = swapWhere(cid);
     var label = node.title ? node.title.split(' · ')[0] : cid;
@@ -1720,13 +1797,17 @@
     var roomSel = $('logs-room');
     var meta = null;
 
+    function learnSeats(seats) {
+      (seats || []).forEach(function (s) {
+        var id = s.playerId != null ? s.playerId : s.id;
+        if (s.name) { names[String(id)] = s.name; names['seat:' + s.seat] = s.name; }
+      });
+    }
+
     function learnNames(e) {
       var d = e._data;
-      if (d && d.game === 'deal' && Array.isArray(d.seats)) {
-        d.seats.forEach(function (s) {
-          if (s.name) { names[String(s.playerId)] = s.name; names['seat:' + s.seat] = s.name; }
-        });
-      }
+      if (d && d.game === 'deal' && Array.isArray(d.seats)) learnSeats(d.seats);
+      if (d && d.kf && Array.isArray(d.kf.seats)) learnSeats(d.kf.seats);
       var m = e.msg.match(/Player (\S+) \(([^)]+)\) joined room/);
       if (m) names[m[1]] = m[2];
       if (lastDetail && lastDetail.roomId === roomId) {
@@ -1753,7 +1834,7 @@
 
     function cards(list) {
       var c = el('span', 'fan');
-      (list || []).forEach(function (card) { c.appendChild(cardFace(card, 'xs')); });
+      (list || []).forEach(function (card) { c.appendChild(cardFace(toCard(card), 'xs')); });
       return c;
     }
 
@@ -1772,7 +1853,40 @@
           parts.push(txt('Round ' + (d.round || 1) + ' dealt'));
           if (Array.isArray(d.seats)) parts.push(txt(' — ' + d.seats.map(function (s) { return (s.name || s.playerId) + ' gets ' + s.cards; }).join(', ')));
           parts.push(txt(' · ' + d.deck + ' in the deck · wells ' + (d.wells || []).join(' / ')));
+          if (d.kf && d.kf.firstTurn && d.kf.firstTurn.rounds && d.kf.firstTurn.rounds.length) {
+            parts.push(txt(' · high card: '));
+            d.kf.firstTurn.rounds.forEach(function (round, i) {
+              if (i) parts.push(txt(' then '));
+              round.forEach(function (pair) { parts.push(txt(' ' + seatName(pair[0]) + ' ')); parts.push(cards([pair[1]])); });
+            });
+          }
           if (d.firstTurn != null) r.divider = seatName(d.firstTurn) + ' starts';
+          break;
+        case 'resume':
+          r.icon = '♻'; r.cls = 'turn';
+          parts.push(txt('Recording resumed mid-round (after a server restart) — the table from here on is exact'));
+          break;
+        case 'stock_promoted':
+          r.icon = '🔁';
+          parts.push(txt('the stock ran out — well ' + ((d.well || 0) + 1) + ' was shuffled in as the new stock (' + d.deck + ' cards)'));
+          break;
+        case 'undo_meld':
+          r.icon = '↩'; r.cls = 'WARN';
+          parts.push(who(d)); parts.push(txt(' asked to undo a meld' + (d.ignored ? ' — ignored (undo is disabled)' : '')));
+          break;
+        case 'dev_change_cards':
+          r.icon = '🛠'; r.cls = 'WARN';
+          parts.push(txt('an admin gave ')); parts.push(who(d)); parts.push(txt(' a new hand: ')); parts.push(cards(d.cards));
+          break;
+        case 'dev_swap_cards':
+          r.icon = '🛠'; r.cls = 'WARN';
+          parts.push(txt('an admin swapped ')); parts.push(cards([d.a && d.a.card]));
+          parts.push(txt(' (' + (d.a && d.a.from) + ') with ')); parts.push(cards([d.b && d.b.card]));
+          parts.push(txt(' (' + (d.b && d.b.from) + ')'));
+          break;
+        case 'match_closed':
+          r.icon = '⛔'; r.cls = 'end';
+          parts.push(txt('Recording closed — the room went away (' + (d.reason || '?') + ') before the match finished'));
           break;
         case 'draw':
           r.icon = d.auto ? '⏰' : '🂠';
@@ -1787,7 +1901,11 @@
           parts.push(txt(' · holds ' + d.hand));
           if (d.pozzettoTaken) parts.push(txt(' · hand emptied → picked up a well (' + d.pozzettoTaken + ' cards)'));
           if (d.minimumMeldFailed) parts.push(txt(' · minimum-meld check failed, this turn\'s melds went back'));
-          if (d.meldsReturned) parts.push(txt(' · ' + d.meldsReturned + ' melded card(s) had to be taken back first'));
+          if (d.meldsReturned) {
+            parts.push(txt(' · ' + d.meldsReturned + ' melded card(s) had to be taken back first'));
+            if (d.returnedCards) { parts.push(txt(': ')); parts.push(cards(d.returnedCards)); }
+          }
+          if (d.kanoonPenalty) parts.push(el('span', 'badge tiny dirty', 'Kanoon ' + d.kanoonPenalty));
           if (d.nextSeat != null) r.divider = seatName(d.nextSeat) + "'s turn";
           break;
         case 'meld':
@@ -1820,6 +1938,7 @@
         case 'take_pozzetto':
           r.icon = '🎁';
           parts.push(who(d)); parts.push(txt(' took a well (' + plural((d.cards || []).length, 'card') + ') · holds ' + d.hand));
+          if (d.cards && d.cards.length) { parts.push(txt(' ')); parts.push(cards(d.cards)); }
           break;
         case 'timeout':
           r.icon = '⏰'; r.cls = 'WARN';
@@ -1849,7 +1968,7 @@
           break;
         case 'leave':
           r.icon = '🚪';
-          parts.push(who(d)); parts.push(txt(' left the room · ' + plural(d.remaining, 'player') + ' remaining'));
+          parts.push(who(d)); parts.push(txt(' left the room' + (d.seat != null ? ' (seat ' + d.seat + ')' : '') + ' · ' + plural(d.remaining, 'player') + ' remaining'));
           break;
         case 'voided':
           r.icon = '⛔'; r.cls = 'end';
@@ -1866,6 +1985,11 @@
           parts.push(txt(d.game + ' ' + JSON.stringify(d)));
       }
       return r;
+    }
+
+    // For the replay's event line: the same sentence the Story shows.
+    function describe(ev) {
+      return describeGame(Object.assign({}, ev, { game: ev.type || ev.game }));
     }
 
     var VOID_TEXT = {
@@ -1960,6 +2084,7 @@
     }
 
     function parseEntry(e) {
+      if (e._ev) return e; // a recorder event: already structured
       e._data = null;
       if (e.data) { try { var d = JSON.parse(e.data); if (d && typeof d === 'object') e._data = d; } catch (x) { /* raw */ } }
       return e;
@@ -1976,7 +2101,8 @@
       if (meta.firstAt) parts.push('from ' + fmtTime(meta.firstAt));
       if (meta.lastAt) parts.push('to ' + fmtTime(meta.lastAt));
       parts.push('showing ' + view.querySelectorAll('.ln, .ev').length + ' of ' + meta.total + (human ? ' story lines' : ' lines'));
-      if (meta.dropped) parts.push(meta.dropped + ' oldest lines already dropped');
+      if (human && meta.events != null) parts.push('game events from the match recorder');
+      if (meta.dropped) parts.push(meta.dropped + (human ? ' old log lines' : ' oldest lines') + ' already dropped');
       if (meta.restored) parts.push('restored from disk after a restart');
       $('logs-meta').textContent = parts.join('   ·   ');
     }
@@ -2001,11 +2127,69 @@
     }
 
     function fetchPage(params) {
-      if (human) params.narrative = 1;
+      if (human) { params.narrative = 1; params.excludeGame = 1; }
       var qs = Object.keys(params).filter(function (k) { return params[k] !== '' && params[k] != null; })
         .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); }).join('&');
       return api('/dev/api/rooms/' + encodeURIComponent(roomId) + '/logs' + (qs ? '?' + qs : ''));
     }
+
+    // ---- the story's game events come from the match recorder ----------------
+    //
+    // The log ring above is shared with every debug line of the room, so in a
+    // long match its earliest [GAME] lines were evicted first. Story mode takes
+    // the game events from the per-match recorder stream instead (never evicted
+    // by chatter) and merges them by time with the ring's lifecycle and
+    // warn/error lines. Raw mode is still the ring, verbatim.
+    var matches = {}; // matchId -> { id, lastSeq, startedMs, seatIds, live }
+    var matchPoll = 0;
+
+    function eventEntry(m, ev) {
+      var d = Object.assign({}, ev, { game: ev.type });
+      if (d.playerId == null && d.seat != null && m.seatIds[d.seat] != null) d.playerId = m.seatIds[d.seat];
+      return { ts: new Date(m.startedMs + (ev.t || 0)).toISOString(), level: 'INFO', msg: '[GAME] ' + ev.type, data: null, _data: d, _ev: true };
+    }
+
+    function passes(entry, q) {
+      if (q.level === 'warn' || q.level === 'error') return false;
+      if (!q.q) return true;
+      return JSON.stringify(entry._data).toLowerCase().indexOf(q.q.toLowerCase()) !== -1;
+    }
+
+    function roomMatches() {
+      return api('/dev/api/matches?roomId=' + encodeURIComponent(roomId) + '&limit=5').then(function (res) {
+        return (res.matches || []).slice().reverse(); // oldest first
+      });
+    }
+
+    function matchEvents(row) {
+      var m = matches[row.matchId];
+      var qs = m ? '?since=' + m.lastSeq : '';
+      return api('/dev/api/matches/' + encodeURIComponent(row.matchId) + qs).then(function (res) {
+        if (!m) {
+          m = matches[row.matchId] = { id: row.matchId, lastSeq: 0, startedMs: Date.parse(res.header.startedAt) || 0, seatIds: {}, live: res.live };
+          (res.header.seats || []).forEach(function (st) { m.seatIds[st.seat] = st.id; });
+          learnSeats(res.header.seats);
+        }
+        m.live = res.live;
+        var out = [];
+        (res.events || []).forEach(function (ev) {
+          if (ev.seq <= m.lastSeq) return;
+          m.lastSeq = ev.seq;
+          if (ev.kf && ev.kf.seats) ev.kf.seats.forEach(function (st) { m.seatIds[st.seat] = st.id; });
+          out.push(eventEntry(m, ev));
+        });
+        return out;
+      });
+    }
+
+    function allMatchEvents(onlyLive) {
+      return roomMatches().then(function (rows) {
+        var todo = rows.filter(function (r) { return !onlyLive || !matches[r.matchId] || matches[r.matchId].live; });
+        return Promise.all(todo.map(matchEvents));
+      }).then(function (lists) { return [].concat.apply([], lists); }).catch(function () { return []; });
+    }
+
+    function byTs(a, b) { return a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0; }
 
     function reload() {
       if (!roomId || loading) return;
@@ -2016,20 +2200,29 @@
       view.classList.toggle('raw', !human);
       since = 0;
       names = {};
-      fetchPage({ tail: 1, limit: human ? 2000 : 800, level: q.level, q: q.q }).then(function (res) {
+      matches = {};
+      var ringPage = fetchPage({ tail: 1, limit: human ? 2000 : 800, level: q.level, q: q.q }).catch(function (e) { return { success: false, error: e.message }; });
+      var events = human ? allMatchEvents(false) : Promise.resolve([]);
+      Promise.all([ringPage, events]).then(function (out) {
         loading = false;
-        if (!res.success) {
+        var res = out[0];
+        var evs = out[1].filter(function (e) { return passes(e, q); });
+        var ring = res && res.success ? res.entries : [];
+        if (!ring.length && !evs.length && !(res && res.success)) {
           meta = null; renderMeta();
-          view.innerHTML = '<div class="empty">' + (res.error || 'no log for this room') + '</div>';
+          view.innerHTML = '<div class="empty">' + ((res && res.error) || 'no log for this room') + '</div>';
           $('btn-logs-download').disabled = true;
           return;
         }
-        if (!res.entries.length) view.innerHTML = '<div class="empty">nothing matches</div>';
-        append(res.entries, q.q.toLowerCase(), true);
-        since = res.nextSince || 0;
-        meta = res;
+        var merged = ring.concat(evs).sort(byTs);
+        if (!merged.length) view.innerHTML = '<div class="empty">nothing matches</div>';
+        append(merged, q.q.toLowerCase(), true);
+        since = (res && res.nextSince) || 0;
+        meta = res && res.success ? res : { roomId: roomId, total: 0, live: false };
+        meta.total = (meta.total || 0) + evs.length;
+        meta.events = evs.length;
         renderMeta();
-        $('btn-logs-download').disabled = false;
+        $('btn-logs-download').disabled = !(res && res.success);
       }).catch(function (e) {
         loading = false;
         view.innerHTML = '<div class="empty">' + e.message + '</div>';
@@ -2044,23 +2237,29 @@
       loading = true;
       var q = query();
       var stick = atBottom();
-      fetchPage({ since: since, limit: 500, level: q.level, q: q.q }).then(function (res) {
+      matchPoll += 1;
+      // New events of the live match every tick; a fresh match list (a new
+      // match in the same room) every few ticks.
+      var events = human ? allMatchEvents(matchPoll % 4 !== 0) : Promise.resolve([]);
+      Promise.all([fetchPage({ since: since, limit: 500, level: q.level, q: q.q }).catch(function () { return null; }), events]).then(function (out) {
         loading = false;
-        if (!res.success) return;
-        if (res.entries.length) {
+        var res = out[0];
+        var evs = out[1].filter(function (e) { return passes(e, q); });
+        var ring = res && res.success ? res.entries : [];
+        var fresh = ring.concat(evs).sort(byTs);
+        if (fresh.length) {
           var placeholder = view.querySelector('.empty');
           if (placeholder) view.removeChild(placeholder);
-          append(res.entries, q.q.toLowerCase(), stick);
-          since = res.nextSince;
+          append(fresh, q.q.toLowerCase(), stick);
         }
-        if (meta && meta.roomId === res.roomId) {
+        if (res && res.success) since = res.nextSince;
+        if (meta && res && res.success && meta.roomId === res.roomId) {
           meta.live = res.live;
           meta.roomStatus = res.roomStatus;
           meta.lastAt = res.lastAt;
           meta.dropped = res.dropped;
-          meta.total += res.entries.length;
-          renderMeta();
         }
+        if (meta) { meta.total += fresh.length; renderMeta(); }
       }).catch(function () { loading = false; });
     }
 
@@ -2083,11 +2282,12 @@
           roomSel.appendChild(opt);
         });
         roomSel.value = roomId || current || '';
-        renderEnded(rows);
+        renderEnded(rooms);
         if (res.retentionMs) {
           $('logs-retention').textContent = 'kept ' + Math.round(res.retentionMs / 3600000 * 10) / 10 + 'h after the last line';
         }
       }).catch(function () { /* transient */ });
+      replay.refreshList();
     }
 
     // opts.quiet: point the tab at the room without switching to it / scrolling.
@@ -2142,10 +2342,11 @@
     $('btn-logs-download').onclick = function () {
       if (!roomId) return;
       var q = query();
-      var params = ['secret=' + encodeURIComponent(secret)];
+      var params = [];
       if (q.level) params.push('level=' + encodeURIComponent(q.level));
       if (q.q) params.push('q=' + encodeURIComponent(q.q));
-      window.open('/dev/api/rooms/' + encodeURIComponent(roomId) + '/logs.txt?' + params.join('&'), '_blank');
+      download('/dev/api/rooms/' + encodeURIComponent(roomId) + '/logs.txt' + (params.length ? '?' + params.join('&') : ''),
+        'game-' + roomId.replace(/[^A-Za-z0-9._-]/g, '_') + '.log');
     };
 
     // The pane was display:none while it loaded, so the "stick to bottom"
@@ -2154,8 +2355,284 @@
       if ($('logs-follow').checked) view.scrollTop = view.scrollHeight;
     }
 
-    return { open: open, start: start, stop: stop, onShown: onShown };
+    return { open: open, start: start, stop: stop, onShown: onShown, describe: describe, learnSeats: learnSeats };
   })();
+
+  // ---- replay: scrub through a recorded match on the table ---------------------------
+  //
+  // The server keeps one event stream per MATCH (GET /dev/api/matches/<id>) and
+  // rebuilds the table at any event (GET .../state?at=<seq>), in the same shape
+  // as the live room detail — so renderBoard() draws a replayed table exactly
+  // like a live one. A live match can be replayed while it is being played; at
+  // the end of the stream the player waits for (and follows) new events.
+
+  var replay = (function () {
+    var st = null; // { matchId, header, events, rounds, index, live, table, cache, timer, followTimer, loading }
+    var slider = $('rb-slider');
+    var CACHE_MAX = 400;
+
+    function active() { return !!st; }
+    function detail() { return st ? st.table : null; }
+
+    function roundsFrom(events) {
+      var out = [];
+      events.forEach(function (e, i) { if (e.kf) out.push({ round: e.kf.round, index: i, reason: e.kf.reason }); });
+      return out;
+    }
+
+    function fillRounds() {
+      var sel = $('rb-round');
+      sel.innerHTML = '';
+      st.rounds.forEach(function (r) {
+        var o = document.createElement('option');
+        o.value = String(r.index);
+        o.textContent = 'Round ' + r.round + (r.reason === 'resume' ? ' (resumed)' : '');
+        sel.appendChild(o);
+      });
+      sel.disabled = st.rounds.length < 2;
+    }
+
+    function roundIndexFor(i) {
+      var best = st.rounds.length ? st.rounds[0].index : 0;
+      st.rounds.forEach(function (r) { if (r.index <= i) best = r.index; });
+      return best;
+    }
+
+    function updateBar() {
+      var n = st.events.length;
+      slider.max = String(Math.max(0, n - 1));
+      slider.value = String(st.index);
+      var ev = st.events[st.index];
+      setText($('rb-pos'), (st.index + 1) + ' / ' + n + (ev ? ' · #' + ev.seq : ''));
+      $('rb-round').value = String(roundIndexFor(st.index));
+      $('rb-play').textContent = st.timer ? '⏸' : '▶';
+      var live = $('rb-live');
+      live.textContent = st.live ? 'replay · live' : 'replay';
+      live.className = 'badge tiny ' + (st.live ? 'live' : 'neutral');
+      $('rb-prev').disabled = $('rb-first').disabled = st.index <= 0;
+      $('rb-next').disabled = $('rb-last').disabled = st.index >= n - 1;
+    }
+
+    function describeLine(ev, table) {
+      var line = $('rb-event');
+      line.innerHTML = '';
+      line.style.display = '';
+      if (!ev) return;
+      var r = gameLogs.describe(ev);
+      line.appendChild(el('span', 'seq', '#' + ev.seq));
+      line.appendChild(el('span', 'ic', r.icon));
+      r.parts.forEach(function (n) { line.appendChild(n); });
+      if (table && table.verified === true) line.appendChild(el('span', 'badge tiny off', '✓ table verified'));
+      if (table && table.verified === false) line.appendChild(el('span', 'badge tiny on', '✗ replay differs from the server'));
+      if (r.divider) line.appendChild(el('span', 'hint', '→ ' + r.divider));
+    }
+
+    function render() {
+      if (!st || !st.table) return;
+      $('detail-empty').style.display = 'none';
+      $('detail-body').style.display = '';
+      $('replaybar').style.display = '';
+      $('lobby').style.display = 'none';
+      $('tools').style.display = 'none';
+      $('board-wrap').style.display = '';
+      $('board-note').style.display = '';
+      measureBoard();
+      renderBoard(st.table);
+      describeLine(st.events[st.index], st.table);
+    }
+
+    function go(i) {
+      if (!st) return;
+      var n = st.events.length;
+      i = Math.max(0, Math.min(n - 1, i | 0));
+      st.index = i;
+      updateBar();
+      var ev = st.events[i];
+      if (!ev) return;
+      var key = String(ev.seq);
+      if (st.cache[key]) { st.table = st.cache[key]; render(); return; }
+      if (st.loading) { st.pending = i; return; }
+      st.loading = true;
+      var id = st.matchId;
+      api('/dev/api/matches/' + encodeURIComponent(id) + '/state?at=' + ev.seq).then(function (table) {
+        if (!st || st.matchId !== id) return;
+        st.loading = false;
+        st.cache[key] = table;
+        var keys = Object.keys(st.cache);
+        if (keys.length > CACHE_MAX) delete st.cache[keys[0]];
+        if (st.pending != null) { var p = st.pending; st.pending = null; go(p); return; }
+        if (st.index === i) { st.table = table; render(); }
+      }).catch(function (e) {
+        if (st) st.loading = false;
+        toast('Replay: ' + e.message, true);
+      });
+    }
+
+    function pause() {
+      if (st && st.timer) { clearInterval(st.timer); st.timer = null; }
+      if (st) updateBar();
+    }
+
+    function play() {
+      if (!st) return;
+      if (st.timer) { pause(); return; }
+      if (st.index >= st.events.length - 1 && !st.live) go(roundIndexFor(0));
+      st.timer = setInterval(function () {
+        if (!st || st.loading) return;
+        if (st.index < st.events.length - 1) go(st.index + 1);
+        else if (!st.live) pause(); // a live match: wait here for the next event
+      }, Number($('rb-speed').value) || 650);
+      updateBar();
+    }
+
+    // A live match keeps growing: pull what is new while the replay is open.
+    function follow() {
+      if (!st || !st.live || st.followTimer) return;
+      st.followTimer = setInterval(function () {
+        if (!st || !st.live) return;
+        var id = st.matchId;
+        var last = st.events.length ? st.events[st.events.length - 1].seq : 0;
+        api('/dev/api/matches/' + encodeURIComponent(id) + '?since=' + last).then(function (res) {
+          if (!st || st.matchId !== id) return;
+          var atEnd = st.index >= st.events.length - 1;
+          (res.events || []).forEach(function (e) { if (e.seq > last) st.events.push(e); });
+          st.live = res.live;
+          var rounds = roundsFrom(st.events);
+          if (rounds.length !== st.rounds.length) { st.rounds = rounds; fillRounds(); }
+          if (atEnd && !st.timer && st.index < st.events.length - 1) go(st.events.length - 1);
+          else updateBar();
+          if (!st.live) { clearInterval(st.followTimer); st.followTimer = null; }
+        }).catch(function () { /* transient */ });
+      }, 2000);
+    }
+
+    function open(matchId, opts) {
+      opts = opts || {};
+      return api('/dev/api/matches/' + encodeURIComponent(matchId)).then(function (res) {
+        // A finished match may come straight off the disk (gzip passthrough):
+        // that is the stored {v, header, events} document, with no `success`.
+        if (!res || !Array.isArray(res.events)) throw new Error((res && res.error) || 'no such match');
+        exit({ quiet: true, keepRoom: true });
+        st = {
+          matchId: matchId, header: res.header || {}, events: res.events || [], live: res.live === true,
+          index: 0, table: null, cache: {}, timer: null, followTimer: null, loading: false, pending: null,
+        };
+        st.rounds = roundsFrom(st.events);
+        gameLogs.learnSeats(st.header.seats);
+        st.events.forEach(function (e) { if (e.kf) gameLogs.learnSeats(e.kf.seats); });
+        setText($('rb-title'), (st.header.roomName || st.header.roomId || '') + ' · ' + matchId);
+        $('rb-title').title = matchId + (st.header.backendMatchId ? ' · backend match ' + st.header.backendMatchId : '');
+        fillRounds();
+        $('replaybar').style.display = '';
+        if (!st.events.length) { toast('This match has no events yet'); return true; }
+        var first = st.rounds.length ? st.rounds[0].index : 0;
+        go(opts.at === 'end' || st.live ? st.events.length - 1 : first);
+        follow();
+        return true;
+      });
+    }
+
+    function openLatestForRoom(roomId) {
+      return api('/dev/api/matches?roomId=' + encodeURIComponent(roomId) + '&limit=1').then(function (res) {
+        var m = (res.matches || [])[0];
+        if (!m) return false;
+        return open(m.matchId).then(function () { return true; });
+      }).catch(function (e) { toast('Replay: ' + e.message, true); return false; });
+    }
+
+    function exit(opts) {
+      opts = opts || {};
+      if (!st) return;
+      pause();
+      if (st.followTimer) clearInterval(st.followTimer);
+      st = null;
+      $('replaybar').style.display = 'none';
+      $('rb-event').style.display = 'none';
+      $('tools').style.display = '';
+      if (opts.keepRoom) return;
+      lastDetail = null;
+      if (selectedRoomId) {
+        $('detail-empty').textContent = 'loading…';
+        clearDetail();
+        loadDetail(true);
+      }
+    }
+
+    function refreshList() {
+      if (!secret) return;
+      api('/dev/api/matches?limit=15').then(function (res) {
+        var list = $('replay-list');
+        var rows = res.matches || [];
+        setText($('replays-count'), res.total ? '· ' + res.total + (res.stats && res.stats.persist ? ' kept on disk' : ' in memory') : '');
+        if (!rows.length) { list.innerHTML = '<div class="empty">no recorded match yet</div>'; return; }
+        list.innerHTML = '';
+        rows.forEach(function (m) {
+          var item = el('button', 'room-item' + (m.live ? '' : ' ended'));
+          item.dataset.matchId = m.matchId;
+          var r1 = el('div', 'r1');
+          r1.appendChild(el('span', 'rid', m.roomName || m.roomId || m.matchId));
+          r1.appendChild(el('span', 'badge tiny ' + (m.live ? 'live' : 'ended'), m.live ? 'playing' : (m.endReason || 'finished').replace(/_/g, ' ')));
+          item.appendChild(r1);
+          item.appendChild(el('div', 'r2', (m.seats || []).map(function (x) { return x.name || x.id; }).join(' vs ')));
+          var bits = [plural(m.rounds || 0, 'round'), plural(m.events || 0, 'event')];
+          if (m.lastScores) bits.push(Object.keys(m.lastScores).map(function (k) { return teamName(k) + ' ' + m.lastScores[k]; }).join(' · '));
+          if (m.truncated) bits.push('truncated');
+          if (m.lastAt) bits.push(fmtTime(m.lastAt).slice(0, 8));
+          item.appendChild(el('div', 'r3', bits.join(' · ')));
+          item.title = m.matchId;
+          if (st && st.matchId === m.matchId) item.classList.add('selected');
+          item.onclick = function () {
+            if (m.roomId) {
+              selectRoom(m.roomId, { noLoad: true });
+              gameLogs.open(m.roomId, { quiet: true });
+            }
+            showTab('detail');
+            open(m.matchId).catch(function (e) { toast('Replay: ' + e.message, true); });
+          };
+          list.appendChild(item);
+        });
+      }).catch(function () { /* transient */ });
+    }
+
+    $('rb-play').onclick = play;
+    $('rb-prev').onclick = function () { if (st) { pause(); go(st.index - 1); } };
+    $('rb-next').onclick = function () { if (st) { pause(); go(st.index + 1); } };
+    $('rb-first').onclick = function () { if (st) { pause(); go(roundIndexFor(st.index)); } };
+    $('rb-last').onclick = function () { if (st) { pause(); go(st.events.length - 1); } };
+    $('rb-exit').onclick = function () { exit(); };
+    $('rb-round').onchange = function () { pause(); go(Number(this.value)); };
+    $('rb-speed').onchange = function () { if (st && st.timer) { pause(); play(); } };
+    var scrub = null;
+    slider.addEventListener('input', function () {
+      if (!st) return;
+      pause();
+      var i = Number(slider.value);
+      st.index = i; updateBar();
+      clearTimeout(scrub);
+      scrub = setTimeout(function () { go(i); }, 60);
+    });
+    $('rb-download').onclick = function () {
+      if (st) download('/dev/api/matches/' + encodeURIComponent(st.matchId) + '?download=1', st.matchId + '.json');
+    };
+    document.addEventListener('keydown', function (e) {
+      if (!st || !$('pane-detail').classList.contains('active')) return;
+      var tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+      if (e.key === 'ArrowRight') { pause(); go(st.index + 1); e.preventDefault(); }
+      else if (e.key === 'ArrowLeft') { pause(); go(st.index - 1); e.preventDefault(); }
+      else if (e.key === ' ') { play(); e.preventDefault(); }
+    });
+
+    return { active: active, detail: detail, open: open, openLatestForRoom: openLatestForRoom, exit: exit, refreshList: refreshList };
+  })();
+
+  $('btn-replay').onclick = function () {
+    if (!selectedRoomId) return;
+    replay.openLatestForRoom(selectedRoomId).then(function (ok) {
+      if (ok) showTab('detail');
+      else toast('No recorded match for this room yet', true);
+    });
+  };
 
   // ---- polling ----------------------------------------------------------------------
 
@@ -2169,9 +2646,11 @@
       $('rooms-refresh').textContent = '· refreshes every 2s · ' + new Date().toLocaleTimeString();
       if (selectedRoomId) {
         var still = body.rooms.some(function (r) { return r.roomId === selectedRoomId; });
-        if (!still) {
+        if (replay.active()) {
+          // the replay owns the table; nothing to refresh
+        } else if (!still) {
           clearDetail();
-          $('detail-empty').textContent = 'this game is over and has been cleaned up — its story is in the Story tab';
+          $('detail-empty').textContent = 'this game is over and has been cleaned up — press Replay to watch it again, or read its Story';
         } else {
           loadDetail(false);
         }

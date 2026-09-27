@@ -340,8 +340,12 @@ See `src/constants/events.js` and `src/constants/matchmaking.js` for canonical n
 - In production, validate and rotate webhook secrets regularly.
 - Never commit real tokens/passwords in `bot/.env`.
 - Per-game logs: every log line the server can attribute to a room is kept per room for at least 2h
-  (finished games included) and readable from the dev console (`GET /dev` → Logs tab) or
-  `GET /dev/api/rooms/<roomId>/logs`. See `docs/GAME_LOGS.md`.
+  (finished games included) and readable from the dev console (`GET /dev` → Story / Raw log) or
+  `GET /dev/api/rooms/<roomId>/logs`.
+- Match replays: every match is recorded as a compact, replay-complete event stream (written gzipped
+  to `GAME_REPLAY_DIR` at each round end, kept 7 days) and can be scrubbed on the dev console table
+  (`GET /dev/api/matches`). The dev console needs `WEBHOOK_SECRET` (header only; it fails closed
+  without one). See `docs/GAME_LOGS.md`.
 
 ---
 

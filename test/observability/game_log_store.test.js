@@ -57,6 +57,10 @@ describe('GameLogStore', () => {
       expect(JSON.parse(err.data).stack).to.be.a('string');
       expect(big.data.length).to.be.lessThan(5000);
       expect(big.data).to.include('chars]');
+      // Still valid JSON, with a marker carrying the original size.
+      const parsed = JSON.parse(big.data);
+      expect(parsed._truncated.bytes).to.be.greaterThan(10_000);
+      expect(parsed.blob.startsWith('xxxx')).to.equal(true);
       expect(longMsg.msg.length).to.be.lessThan(2200);
     });
 
@@ -158,6 +162,69 @@ describe('GameLogStore', () => {
     });
   });
 
+  describe('ring + byte budget', () => {
+    it('the ring overwrites in place: order, counts and eviction without Array#shift', () => {
+      const ring = new GameLogStore.Ring(3);
+      expect(ring.push('a')).to.equal(undefined);
+      ring.push('b');
+      ring.push('c');
+      expect(ring.push('d')).to.equal('a');
+      expect(ring.push('e')).to.equal('b');
+      expect(ring.toArray()).to.deep.equal(['c', 'd', 'e']);
+      expect(ring.first()).to.equal('c');
+      expect(ring.last()).to.equal('e');
+    });
+
+    it('keeps its per-line cost flat as a room fills and wraps', () => {
+      const store = new GameLogStore({ maxEntriesPerRoom: 50_000, maxTotalEntries: 10_000_000 });
+      const burst = (n) => {
+        const t0 = process.hrtime.bigint();
+        for (let i = 0; i < n; i += 1) store.record('hot', { level: 'DEBUG', message: 'chatter' });
+        return Number(process.hrtime.bigint() - t0) / n;
+      };
+      burst(5000); // warm-up
+      const early = burst(5000);
+      burst(80_000); // the ring is full and wrapping from here on
+      const late = burst(5000);
+      expect(late).to.be.lessThan(early * 4 + 20_000);
+      expect(store.get('hot', { limit: 1 }).dropped).to.be.greaterThan(0);
+    });
+
+    it('evicts whole cold rooms when the BYTE budget is hit', () => {
+      const clock = fakeClock();
+      const store = new GameLogStore({ maxTotalBytes: 1024 * 1024, now: clock.now });
+      const blob = 'z'.repeat(3000);
+      for (let i = 0; i < 200; i += 1) store.record('cold', { message: 'x', data: { blob } });
+      clock.advance(1000);
+      for (let i = 0; i < 200; i += 1) store.record('warm', { message: 'x', data: { blob } });
+      expect(store.has('cold')).to.equal(false);
+      expect(store.has('warm')).to.equal(true);
+      expect(store.stats().bytes).to.be.at.most(1024 * 1024);
+    });
+
+    it('a write moves its room to the warm end, so an active old room survives eviction', () => {
+      const store = new GameLogStore({ maxEntriesPerRoom: 50, maxTotalEntries: 100 });
+      for (let i = 0; i < 40; i += 1) store.record('long-game', { message: 'x' });
+      for (let i = 0; i < 40; i += 1) store.record('idle', { message: 'x' });
+      store.record('long-game', { message: 'still here' });
+      for (let i = 0; i < 30; i += 1) store.record('new', { message: 'x' });
+      expect(store.has('idle')).to.equal(false);
+      expect(store.has('long-game')).to.equal(true);
+    });
+
+    it('truncates huge arrays and nested payloads into VALID JSON with a marker', () => {
+      const store = new GameLogStore();
+      const cards = Array.from({ length: 400 }, (_, i) => ({ suit: 'hearts', rank: String(i), cardId: i }));
+      store.record('r', { message: 'state', data: { roomId: 'r', hand: cards, deep: { a: { b: { c: { d: 'x'.repeat(9000) } } } } } });
+      const [entry] = store.get('r').entries;
+      expect(entry.data.length).to.be.at.most(4096);
+      const parsed = JSON.parse(entry.data);
+      expect(parsed.roomId).to.equal('r');
+      expect(parsed._truncated.bytes).to.be.greaterThan(4096);
+      expect(parsed.hand[parsed.hand.length - 1]).to.match(/items\]$/);
+    });
+  });
+
   describe('retention', () => {
     it('keeps a finished game readable for the full retention window after its last line', () => {
       const clock = fakeClock();
@@ -229,12 +296,16 @@ describe('GameLogStore', () => {
       expect(lines).to.have.length(2);
       expect(JSON.parse(lines[1]).msg).to.equal('timeout');
 
-      // "Restart": a brand-new store over the same directory.
+      // "Restart": a brand-new store over the same directory. The directory
+      // listing is async and cached — nothing on the read/write path is sync.
       const reborn = new GameLogStore({ fileEnabled: true, fileDirectory: dir });
+      await reborn.refreshFileIndex();
       const listed = reborn.list();
       expect(listed.map((r) => r.roomId).sort()).to.deep.equal(['other', 'room-9']);
       expect(listed.find((r) => r.roomId === 'room-9').onDisk).to.equal(true);
 
+      expect(reborn.get('room-9').success).to.equal(false); // not loaded yet
+      expect(await reborn.ensureLoaded('room-9')).to.equal(true);
       const res = reborn.get('room-9');
       expect(res.success).to.equal(true);
       expect(res.restored).to.equal(true);
@@ -248,7 +319,7 @@ describe('GameLogStore', () => {
       expect(all.entries[2].seq).to.be.greaterThan(all.entries[1].seq);
     });
 
-    it('skips a torn trailing line instead of failing the whole file', () => {
+    it('skips a torn trailing line instead of failing the whole file', async () => {
       fs.writeFileSync(
         path.join(dir, 'torn.jsonl'),
         JSON.stringify({
@@ -260,6 +331,7 @@ describe('GameLogStore', () => {
         }) + '\n{"seq":2,"ts":"2026-'
       );
       const store = new GameLogStore({ fileEnabled: true, fileDirectory: dir });
+      await store.ensureLoaded('torn');
       const res = store.get('torn');
       expect(res.success).to.equal(true);
       expect(res.entries.map((e) => e.msg)).to.deep.equal(['ok']);
@@ -281,8 +353,48 @@ describe('GameLogStore', () => {
 
       clock.advance(3 * HOUR);
       store.sweep();
+      // The file half of the sweep is async (it rides the room's append chain).
+      await store.sweepFiles();
       expect(fs.existsSync(file)).to.equal(false);
       expect(store.has('stale')).to.equal(false);
+    });
+
+    it('never unlinks under a queued append (sweep vs flush) and clear() drops the chains', async () => {
+      const clock = fakeClock(Date.now());
+      const store = new GameLogStore({ fileEnabled: true, fileDirectory: dir, retentionMs: 2 * HOUR, now: clock.now });
+      store.record('racy', { message: 'first' });
+      await store.flush();
+      const file = path.join(dir, 'racy.jsonl');
+      const past = new Date(Date.now() - 3 * HOUR);
+      fs.utimesSync(file, past, past);
+      // A new line is still pending when the sweep looks at the (old) file.
+      clock.advance(3 * HOUR);
+      store.record('racy', { message: 'second' });
+      const swept = await store.sweepFiles(clock.now() - 2 * HOUR);
+      expect(swept).to.equal(0);
+      await store.flush();
+      const lines = fs.readFileSync(file, 'utf8').trim().split('\n');
+      expect(lines.map((l) => JSON.parse(l).msg)).to.deep.equal(['first', 'second']);
+
+      store.record('racy', { message: 'third' });
+      const pending = store.flush();
+      store.clear();
+      expect(store._appendChains.size).to.equal(0);
+      expect(store._pendingLines.size).to.equal(0);
+      await pending;
+    });
+
+    it('merges a pre-restart file under lines this process already recorded (no duplicates)', async () => {
+      const first = new GameLogStore({ fileEnabled: true, fileDirectory: dir });
+      first.record('resumed', { message: 'before restart' });
+      await first.flush();
+
+      const reborn = new GameLogStore({ fileEnabled: true, fileDirectory: dir });
+      await reborn.refreshFileIndex();
+      reborn.record('resumed', { message: 'after restart' });
+      await reborn.flush();
+      await reborn.ensureLoaded('resumed');
+      expect(reborn.get('resumed').entries.map((e) => e.msg)).to.deep.equal(['before restart', 'after restart']);
     });
 
     it('sanitizes the room id into a safe file name', async () => {
