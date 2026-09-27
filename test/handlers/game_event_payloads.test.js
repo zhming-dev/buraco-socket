@@ -270,8 +270,20 @@ describe('[GAME] event payloads (recorder)', () => {
       const me = t.current();
       t.handler.handlePickUpPile(me.socket, {});
       const hand = t.room.playerHands.get(me.playerId);
-      const throwAway = hand.find((c) => !t.room.kanoonPileTake.cardIds.includes(String(c.cardId)) && c.rank !== '2' && c.rank !== 'joker');
+      const takenIds = t.room.kanoonPileTake.cardIds;
+      const taken = hand.filter((c) => takenIds.includes(String(c.cardId)));
+      // Not a taken card, and not a TWIN of one either: a lone-card take locks
+      // every same-face copy already in hand (anti ping-pong), so a twin picked
+      // here made the discard bounce on ~1 deal in 100 and left no event.
+      const throwAway = hand.find(
+        (c) =>
+          !takenIds.includes(String(c.cardId)) &&
+          !taken.some((tc) => tc.suit === c.suit && tc.rank === c.rank) &&
+          c.rank !== '2' &&
+          c.rank !== 'joker'
+      );
       t.handler.handleDiscardCard(me.socket, { card: throwAway.toJSON() });
+      expect(t.room.playerHands.get(me.playerId)).to.not.include(throwAway);
       const manual = last(await events(t.roomId), 'discard');
       expect(manual.kanoonPenalty).to.equal(-ActionHandlers.KANOON_PILE_CHARGE);
 
