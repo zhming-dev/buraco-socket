@@ -141,6 +141,22 @@ const config = {
     maxDiskBytes: intWithDefault('GAME_REPLAY_MAX_DISK_BYTES', 2 * 1024 * 1024 * 1024),
   },
 
+  // Dev console → WLive admin API proxy (/dev/api/admin/*). The console's
+  // Overrides / Skins / Stickers / Review / Settings pages call wlive-api's
+  // `/api/buraco/admin/*` THROUGH this socket, which adds the shared
+  // `x-buraco-admin-secret` and the operator's name as `x-admin-actor`. The
+  // browser never sees the admin secret. Unset base or secret = those pages
+  // answer 501. See src/dev/adminProxy.js.
+  wliveAdmin: {
+    // wlive-api base URL (scheme + host [+ path prefix]), e.g. https://api.example.com
+    apiBase: process.env.WLIVE_ADMIN_API_BASE || null,
+    // = wlive-api BURACO_ADMIN_PROXY_SECRET
+    secret: process.env.WLIVE_ADMIN_SECRET || null,
+    timeoutMs: intWithDefault('WLIVE_ADMIN_TIMEOUT_MS', 30000),
+    // Skin artwork goes up as multipart (table image <= 8 MB + 4 MB per other slot).
+    maxBodyBytes: intWithDefault('WLIVE_ADMIN_MAX_BODY_BYTES', 40 * 1024 * 1024),
+  },
+
   // Server-side bot worker. The worker runs in a child process so a bot strategy
   // crash cannot bring down the realtime socket process.
   bot: {

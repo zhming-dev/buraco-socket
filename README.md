@@ -38,6 +38,9 @@ Main variables in `.env`:
 - `PARTNER_WEBHOOK_URL` (where this server sends outbound gameplay events)
 - `PARTNER_WEBHOOK_SECRET` (HMAC signing secret for outbound events)
 - `PARTNER_WEBHOOK_EVENTS` (comma-separated allowlist)
+- `WLIVE_ADMIN_API_BASE` (wlive-api base URL for the dev console's Buraco admin pages, e.g. `https://api.example.com`)
+- `WLIVE_ADMIN_SECRET` (= wlive-api `BURACO_ADMIN_PROXY_SECRET`; stays on this server, never sent to the browser)
+- `WLIVE_ADMIN_TIMEOUT_MS` (default `30000`), `WLIVE_ADMIN_MAX_BODY_BYTES` (upload cap, default 40 MB)
 
 ### 3) Backend-to-socket synchronization flow (recommended)
 
@@ -346,6 +349,14 @@ See `src/constants/events.js` and `src/constants/matchmaking.js` for canonical n
   to `GAME_REPLAY_DIR` at each round end, kept 7 days) and can be scrubbed on the dev console table
   (`GET /dev/api/matches`). The dev console needs `WEBHOOK_SECRET` (header only; it fails closed
   without one). See `docs/GAME_LOGS.md`.
+- Buraco admin (`GET /dev` → Overrides / Skins / Stickers / Review / Settings): the console calls
+  wlive-api's `/api/buraco/admin/*` through this server's `/dev/api/admin/*` proxy
+  (`src/dev/adminProxy.js`). Same dev auth as every `/dev/api` call; the proxy adds
+  `x-buraco-admin-secret` (`WLIVE_ADMIN_SECRET`) and `x-admin-actor` (the name the operator enters
+  once in the console, required for every change), forwards only the allowlisted admin paths,
+  streams uploads through and answers 501 until `WLIVE_ADMIN_API_BASE` + `WLIVE_ADMIN_SECRET` are
+  set. Skin/sticker uploads go through this host: a proxy in front of it (nginx) needs
+  `client_max_body_size` of about 40m for `/dev/api/admin/`.
 
 ---
 
