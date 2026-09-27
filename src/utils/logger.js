@@ -36,6 +36,27 @@ const ROOM_MENTION_RE = /\broom(?:Id)?\s*[:=]?\s*([A-Za-z0-9][A-Za-z0-9_.:-]{0,6
 
 const roomContext = new AsyncLocalStorage();
 
+/** Bytes the file stream may buffer before lines are dropped. */
+const FILE_BUFFER_LIMIT = 8 * 1024 * 1024;
+
+function jsonReplacer(_key, val) {
+  if (val instanceof Map) return Object.fromEntries(val);
+  if (val instanceof Set) return Array.from(val);
+  if (typeof val === 'bigint') return val.toString();
+  return val;
+}
+
+/** One-line JSON for the file sink (Errors keep name/message/stack). */
+function compactJson(data) {
+  if (typeof data === 'string') return data;
+  const value = data instanceof Error ? { name: data.name, message: data.message, stack: data.stack } : data;
+  try {
+    return JSON.stringify(value, jsonReplacer);
+  } catch {
+    return String(value);
+  }
+}
+
 class Logger {
   constructor() {
     this.level = this._getLevelFromString(config.logging.level);
@@ -50,13 +71,30 @@ class Logger {
       retentionMs: gameLog.retentionMs,
       maxEntriesPerRoom: gameLog.maxEntriesPerRoom,
       maxTotalEntries: gameLog.maxTotalEntries,
+      maxTotalBytes: gameLog.maxTotalBytes,
       fileEnabled: this.gameLogEnabled && gameLog.fileEnabled === true,
       fileDirectory: gameLog.fileDirectory,
     });
 
+    // Buffered daily file sink (see _writeToFile).
+    this._fileStream = null;
+    this._fileDate = null;
+    this._fileDropped = 0;
+
     if (this.enableFile) {
       this._ensureLogDirectory();
     }
+  }
+
+  /**
+   * Whether a line at `level` would reach ANY sink. Use it to skip building an
+   * expensive message (a JSON.stringify in a template literal is paid before
+   * the logger ever sees the level).
+   * @param {'error'|'warn'|'info'|'debug'} level
+   */
+  isLevelEnabled(level) {
+    const num = LogLevel[String(level || '').toUpperCase()];
+    return num !== undefined && this._wants(num);
   }
 
   /**
@@ -188,7 +226,7 @@ class Logger {
       }
 
       if (this.enableFile) {
-        this._writeToFile(logMessage, data);
+        this._writeToFile(timestamp, logMessage, data);
       }
     }
 
@@ -254,26 +292,63 @@ class Logger {
   }
 
   /**
-   * Write log to file
+   * Append one line to the daily log file through a buffered WriteStream
+   * (never appendFileSync on the hot path). `data` is written as ONE line of
+   * compact JSON after the message, so the file stays greppable line by line.
+   * If the disk cannot keep up the stream's buffer is capped: past
+   * FILE_BUFFER_LIMIT lines are dropped (and counted) rather than growing the
+   * heap without bound.
    * @private
+   * @param {string} timestamp ISO time of the line (its date picks the file)
    * @param {string} message
    * @param {any} data
    */
-  _writeToFile(message, data = null) {
+  _writeToFile(timestamp, message, data = null) {
     try {
-      const date = new Date().toISOString().split('T')[0];
-      const logFile = path.join(this.logDirectory, `${date}.log`);
-
-      let fullMessage = message;
-      if (data) {
-        fullMessage += '\n' + JSON.stringify(data, null, 2);
+      const date = String(timestamp).slice(0, 10);
+      if (!this._fileStream || this._fileDate !== date) this._openFileStream(date);
+      if (!this._fileStream) return;
+      if (this._fileStream.writableLength > FILE_BUFFER_LIMIT) {
+        this._fileDropped += 1;
+        return;
       }
-      fullMessage += '\n';
-
-      fs.appendFileSync(logFile, fullMessage);
+      let line = message;
+      if (data !== null && data !== undefined) line += ' ' + compactJson(data);
+      if (this._fileDropped) {
+        line += ` [logger: ${this._fileDropped} line(s) dropped, disk too slow]`;
+        this._fileDropped = 0;
+      }
+      this._fileStream.write(line + '\n');
     } catch (error) {
       console.error('Failed to write to log file:', error);
     }
+  }
+
+  /** @private */
+  _openFileStream(date) {
+    if (this._fileStream) {
+      try {
+        this._fileStream.end();
+      } catch {
+        // already closed
+      }
+    }
+    this._fileDate = date;
+    const stream = fs.createWriteStream(path.join(this.logDirectory, `${date}.log`), { flags: 'a' });
+    stream.on('error', (error) => {
+      console.error('Log file stream failed, file logging disabled:', error.message);
+      if (this._fileStream === stream) this._fileStream = null;
+      this.enableFile = false;
+    });
+    this._fileStream = stream;
+  }
+
+  /** Flush and close the file sink (shutdown). */
+  closeFile() {
+    const stream = this._fileStream;
+    this._fileStream = null;
+    if (!stream) return Promise.resolve();
+    return new Promise((resolve) => stream.end(resolve));
   }
 
   /**

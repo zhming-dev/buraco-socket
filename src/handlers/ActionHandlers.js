@@ -7,6 +7,7 @@ const { GameValidator } = require('../validators');
 const { GameRoomStatus } = require('../constants');
 const { Card } = require('../models/Deck');
 const logger = require('../utils/logger');
+const { emitGameEvent } = require('../observability/gameEvents');
 
 /** Cards a meld needs to be a buraco — and the size below which no grade
  * exists to ratchet (see _latchMeldGrade). Same figure the isBuraco stamps
@@ -1266,10 +1267,14 @@ class ActionHandlers {
       (p) => Array.isArray(p) && p.length > 0
     );
     if (nextPile) {
+      const wellIndex = room.deadPiles.indexOf(nextPile);
       room.deck.cards.push(...nextPile);
       room.deck.shuffle();
       // EMPTY THE SLOT, do not drop it. See _emptyDeadPileSlot.
       this._emptyDeadPileSlot(room, nextPile);
+      // Its own game event: the promoted well and the reshuffled stock land in
+      // this event's zone diff instead of hiding inside the draw that follows.
+      emitGameEvent(room, 'stock_promoted', { well: wellIndex, deck: room.deck.count });
       return null;
     }
 

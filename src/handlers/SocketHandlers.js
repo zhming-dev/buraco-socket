@@ -12,6 +12,9 @@ const GameValidator = require('../validators/GameValidator');
 const { Card } = require('../models/Deck');
 const PlayerSession = require('../models/PlayerSession');
 const metrics = require('../observability/metrics');
+const { emitGameEvent } = require('../observability/gameEvents');
+const { getGameEventRecorder } = require('../observability/GameEventRecorder');
+const replayCodec = require('../observability/replayCodec');
 const { randomBytes } = require('crypto');
 const { startBackendAttempt, abortBackendAttempt } = require('../services/BackendStartAttempt');
 
@@ -200,6 +203,9 @@ class SocketHandlers {
         const ownedHere = !this._ownershipEnabled() || this.ownedRoomIds.has(String(roomId));
         this._stopOwningRoom(roomId, 'room_deleted');
         this.botCoordinator?.unregisterRoom(roomId);
+        // A match that never reached a terminal event (abandoned, reaped,
+        // deleted between rounds) still gets its replay closed and written.
+        getGameEventRecorder().closeRoom(roomId, 'room_deleted');
         // P1-10: drop spectator bookkeeping for the deleted room so the
         // roomSpectators / spectatorSocketToRoom maps don't leak entries for
         // rooms that no longer exist.
@@ -868,28 +874,26 @@ class SocketHandlers {
   }
 
   /**
-   * One structured line per GAME-LEVEL fact (deal, draw, discard, meld, take,
-   * timeout, round end, seat comes/goes). This is the human-readable spine of a
-   * room's per-game log: the dev console renders `[GAME]` lines as sentences
-   * with card chips, and `?q=[GAME]` on the logs API gives the bare narrative
-   * without the protocol chatter. Cards travel as `{suit, rank, cardId}`.
+   * One event per GAME-LEVEL fact (deal, draw, discard, meld, take, timeout,
+   * round end, seat comes/goes). Recorded into the match's replay stream
+   * (GameEventRecorder — the table diff rides along automatically) AND logged
+   * as a `[GAME]` line, the human-readable spine of the room's log. Cards
+   * travel as compact refs, "QH#123" (see observability/gameEvents.js).
    * @param {GameRoom} room
    * @param {string} type
    * @param {object} [payload]
    */
   _gameEvent(room, type, payload = {}) {
-    if (!room) return;
-    logger.info(`[GAME] ${type}`, { roomId: room.roomId, game: type, ...payload });
+    return emitGameEvent(room, type, payload);
   }
 
-  /** Compact card for _gameEvent payloads. */
+  /** Compact card ref ("QH#123") for _gameEvent payloads. */
   _briefCard(card) {
-    if (!card) return null;
-    return { suit: card.suit, rank: card.rank, cardId: card.cardId ?? card.instanceId ?? null };
+    return replayCodec.cardRef(card);
   }
 
   _briefCards(cards) {
-    return Array.isArray(cards) ? cards.map((c) => this._briefCard(c)).filter(Boolean) : [];
+    return replayCodec.cardRefs(cards);
   }
 
   _extractTurnTimeLimitSeconds(data = {}) {
@@ -2105,8 +2109,12 @@ class SocketHandlers {
           seat: p.playerIndex,
           playerId: p.playerId,
           name: p.playerName,
+          isBot: p.isBot === true,
           cards: (room.playerHands.get(p.playerId) || []).length,
         })),
+        // Who won the high-card draw (round 1 / level scores) — the drawn cards
+        // themselves are in the recorder's deal keyframe.
+        firstTurnDraw: room.firstTurnDraw ? room.firstTurnDraw.winnerIndex ?? null : null,
       });
       logger.info(
         `[DEAL_CARDS] Deck count: ${room.deck?.count}, Pozzetto piles: ${room.deadPiles?.length}`
@@ -5005,6 +5013,12 @@ class SocketHandlers {
 
     this._sendGameStateUpdate(room);
 
+    this._gameEvent(room, 'dev_change_cards', {
+      playerId: player.playerId,
+      seat: player.playerIndex,
+      cards: this._briefCards(matches),
+      deck: room.deck.count,
+    });
     logger.info('[DEV_CHANGE_CARDS] hand replaced', {
       roomId,
       playerId: player.playerId,
@@ -5098,6 +5112,10 @@ class SocketHandlers {
       from: loc.where,
       playerId: loc.playerId ?? null,
       seat: loc.seat ?? null,
+    });
+    this._gameEvent(room, 'dev_swap_cards', {
+      a: { card: this._briefCard(a.card), from: a.where, seat: a.seat ?? null },
+      b: { card: this._briefCard(b.card), from: b.where, seat: b.seat ?? null },
     });
     logger.info('[DEV_CHANGE_CARDS] cards swapped', {
       roomId,
@@ -5348,7 +5366,11 @@ class SocketHandlers {
         logger.info(
           `[LEAVE_ROOM] ✓ Player ${playerId} left room ${room.roomId}. Remaining players: ${room.players.size}`
         );
-        this._gameEvent(room, 'leave', { playerId, remaining: room.players.size });
+        this._gameEvent(room, 'leave', {
+          playerId,
+          seat: leavingPlayer?.playerIndex ?? null,
+          remaining: room.players.size,
+        });
       }
     } else {
       logger.warn(`[LEAVE_ROOM] ✗ Player ${playerId} failed to leave room`);
@@ -8560,12 +8582,16 @@ class SocketHandlers {
         fromDeck: Boolean(fromDeck),
       });
 
-      logger.info(
-        `[DRAW_CARD] Emitted CARD_DRAWN to player ${playerId}: ${JSON.stringify(result.toPlayer)}`
-      );
-      logger.info(
-        `[DRAW_CARD] Emitted CARD_DRAWN to other players in room ${room.roomId}: ${JSON.stringify(result.toOthers)}`
-      );
+      // Protocol echo, debug only — and the JSON is built only when some sink
+      // actually wants a debug line (the draw itself is the [GAME] draw event).
+      if (logger.isLevelEnabled('debug')) {
+        logger.debug(
+          `[DRAW_CARD] Emitted CARD_DRAWN to player ${playerId}: ${JSON.stringify(result.toPlayer)}`
+        );
+        logger.debug(
+          `[DRAW_CARD] Emitted CARD_DRAWN to other players in room ${room.roomId}: ${JSON.stringify(result.toOthers)}`
+        );
+      }
       logger.info('[DRAW_CARD] ✓ Sending updated game state to all players.');
       // Send updated game state to all players to keep UI in sync
       this._sendGameStateUpdate(room);
@@ -10372,7 +10398,10 @@ class SocketHandlers {
     // longer one card long, so the close guard that blocked the discard no
     // longer applies and the turn ends like any other.
     let meldsReturned = 0;
+    let returnedCards = [];
     if (legal.length === 0) {
+      // Which cards go back, for the game event (the count alone could not say).
+      returnedCards = this._briefCards(room.turnMeldedCards?.get(playerId) || []);
       meldsReturned = ActionHandlers.undoTurnMelds(room, playerId);
       if (meldsReturned > 0) {
         hand = room.playerHands.get(playerId) || [];
@@ -10413,8 +10442,11 @@ class SocketHandlers {
           card: this._briefCard(result.broadcast?.card),
           hand: (room.playerHands.get(playerId) || []).length,
           pozzettoTaken: result.broadcast?.pozzettoTaken || 0,
+          minimumMeldFailed: Boolean(result.broadcast?.minimumMeld),
+          kanoonPenalty: result.broadcast?.kanoonPenalty?.value || 0,
           auto: true,
           meldsReturned,
+          ...(meldsReturned > 0 ? { returnedCards } : {}),
           nextSeat: result.roundEnded ? null : (result.turnChanged?.newPlayerIndex ?? room.currentTurn),
         });
         this.io.to(room.roomId).emit(SocketEvents.CARD_DISCARDED, {
@@ -10924,6 +10956,17 @@ class SocketHandlers {
     // No state is mutated and no MELD_UNDONE is broadcast.
     const playerId = this.gameService.getPlayerIdBySocket(socket.id);
     logger.info(`[UNDO_MELD] Ignored — undo is disabled (player ${playerId})`);
+    // Still a game fact worth a line in the story: a client asked to undo and
+    // the table did not move (the replay diff for this event is always empty).
+    const room = playerId ? this.gameService.getPlayerRoom(playerId) : null;
+    if (room && room.cardsDealt) {
+      this._gameEvent(room, 'undo_meld', {
+        playerId,
+        seat: room.getPlayer(playerId)?.playerIndex ?? null,
+        ignored: true,
+        reason: 'undo_disabled',
+      });
+    }
   }
 }
 

@@ -54,6 +54,8 @@ const PartnerWebhookRelay = require('./integrations/PartnerWebhookRelay');
 const { BotCoordinator } = require('./bots');
 const metrics = require('./observability/metrics');
 const OccupancyMonitor = require('./observability/OccupancyMonitor');
+const { getGameEventRecorder } = require('./observability/GameEventRecorder');
+const { isDevAuthorized, sendRoomLogs, handleDevMatches } = require('./dev/devApi');
 
 class BraziliaServer {
   constructor() {
@@ -119,19 +121,21 @@ class BraziliaServer {
         // Dev dashboard (operator tool). GET /dev serves the single-file admin
         // page; /dev/api/* are its secret-guarded read endpoints. The page itself
         // is a static shell with no secrets — every API call must carry the
-        // webhook secret (x-webhook-secret header or ?secret= query).
+        // webhook secret in the `x-webhook-secret` HEADER.
+        //
+        // FAIL CLOSED: with no WEBHOOK_SECRET configured every /dev/api call is
+        // refused (these endpoints expose every player's cards). The `?secret=`
+        // query form is gone too — it leaked the secret into access logs and
+        // browser history; the console downloads through fetch() with the header.
         // ---------------------------------------------------------------------------
 
-        const devAuthorized = () => {
-          if (!this.config.security.webhookSecret) return true; // unset (local dev)
-          const header = req.headers['x-webhook-secret'];
-          if (header === this.config.security.webhookSecret) return true;
-          try {
-            const query = new URL(req.url, 'http://localhost').searchParams;
-            return query.get('secret') === this.config.security.webhookSecret;
-          } catch {
-            return false;
-          }
+        const devAuthorized = () => isDevAuthorized(req, this.config.security.webhookSecret);
+        const devDenied = () => {
+          sendJson(res, 401, {
+            error: this.config.security.webhookSecret
+              ? 'Unauthorized'
+              : 'Dev console disabled: set WEBHOOK_SECRET',
+          });
         };
 
         if (req.method === 'GET' && (req.url === '/dev' || req.url.startsWith('/dev?'))) {
@@ -179,9 +183,7 @@ class BraziliaServer {
 
         if (req.method === 'GET' && req.url.startsWith('/dev/api/status')) {
           if (!devAuthorized()) {
-            res.statusCode = 401;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: 'Unauthorized' }));
+            devDenied();
             return;
           }
           const listing = this.socketHandlers.listRoomsForDev();
@@ -197,6 +199,7 @@ class BraziliaServer {
               stats: listing.stats,
               development: listing.development,
               gameLog: logger.gameLogStore.stats(),
+              replay: getGameEventRecorder().stats(),
             })
           );
           return;
@@ -214,10 +217,36 @@ class BraziliaServer {
         // Must precede the /dev/api/rooms/<roomId> detail route below.
         if (req.method === 'GET' && req.url.startsWith('/dev/api/logs')) {
           if (!devAuthorized()) {
-            sendJson(res, 401, { error: 'Unauthorized' });
+            devDenied();
             return;
           }
-          sendJson(res, 200, this.socketHandlers.listRoomLogsForDev());
+          logger.gameLogStore
+            .refreshFileIndex()
+            .catch(() => {})
+            .then(() => sendJson(res, 200, this.socketHandlers.listRoomLogsForDev()));
+          return;
+        }
+
+        // Match replays (dev console → Table → Replay, and the Story tab).
+        //   GET /dev/api/matches                 → recent live + finished matches
+        //       ?roomId=<id> &status=live|finished &limit=<n> &offset=<n>
+        //   GET /dev/api/matches/<matchId>       → the full event stream (JSON)
+        //       ?since=<seq>  only events after seq (live follow)
+        //       gzip passthrough when the client accepts it and the match is on disk
+        //   GET /dev/api/matches/<matchId>/state?at=<seq>
+        //       → the table rebuilt at that event, shaped like /dev/api/rooms/<id>
+        if (req.method === 'GET' && req.url.startsWith('/dev/api/matches')) {
+          if (!devAuthorized()) {
+            devDenied();
+            return;
+          }
+          handleDevMatches(req, res, {
+            recorder: getGameEventRecorder(),
+            liveness: (roomId) => this.socketHandlers._roomLivenessForDev(roomId),
+          }).catch((error) => {
+            logger.error('[DEV] match replay request failed', { requestId, error: error.message });
+            if (!res.headersSent) sendJson(res, 500, { success: false, error: 'Internal Server Error' });
+          });
           return;
         }
 
@@ -225,44 +254,27 @@ class BraziliaServer {
           req.method === 'GET' && req.url.match(/^\/dev\/api\/rooms\/([^/?]+)\/logs(\.txt)?(?:\?|$)/);
         if (roomLogsMatch) {
           if (!devAuthorized()) {
-            sendJson(res, 401, { error: 'Unauthorized' });
+            devDenied();
             return;
           }
           const roomId = decodeURIComponent(roomLogsMatch[1]);
-          const query = new URL(req.url, 'http://localhost').searchParams;
-          const opts = {
-            since: query.get('since'),
-            level: query.get('level'),
-            q: query.get('q'),
-            limit: query.get('limit'),
-            tail: ['1', 'true'].includes(query.get('tail')),
-            narrative: ['1', 'true'].includes(query.get('narrative')),
-          };
-          if (roomLogsMatch[2]) {
-            const text = logger.gameLogStore.renderText(roomId, { level: opts.level, q: opts.q });
-            if (text === null) {
-              sendJson(res, 404, { success: false, error: 'No logs for room' });
-              return;
-            }
-            res.statusCode = 200;
-            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-            res.setHeader(
-              'Content-Disposition',
-              `attachment; filename="game-${roomId.replace(/[^A-Za-z0-9._-]/g, '_')}.log"`
+          // A room whose log is still on disk only (after a restart) is loaded
+          // asynchronously first; the read below is memory-only.
+          logger.gameLogStore
+            .ensureLoaded(roomId)
+            .catch(() => false)
+            .then(() =>
+              sendRoomLogs(req, res, roomId, Boolean(roomLogsMatch[2]), {
+                store: logger.gameLogStore,
+                getRoomLogs: (id, opts) => this.socketHandlers.getRoomLogsForDev(id, opts),
+              })
             );
-            res.end(text);
-            return;
-          }
-          const result = this.socketHandlers.getRoomLogsForDev(roomId, opts);
-          sendJson(res, result.success ? 200 : 404, result);
           return;
         }
 
         if (req.method === 'GET' && req.url.startsWith('/dev/api/rooms')) {
           if (!devAuthorized()) {
-            res.statusCode = 401;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: 'Unauthorized' }));
+            devDenied();
             return;
           }
           // /dev/api/rooms/<roomId> → detail; bare /dev/api/rooms → roster.
@@ -1060,6 +1072,14 @@ class BraziliaServer {
       );
       this.occupancyMonitor.start();
 
+      // Per-match replay recorder: disk pruner (writes happen at round ends).
+      if (this.config.gameReplay?.enabled) {
+        const recorder = getGameEventRecorder().start();
+        logger.info(
+          `✓ Match replays enabled (${recorder.persist ? `written to ${recorder.directory}, kept ${Math.round(recorder.retentionMs / 86400000)}d` : 'memory only'})`
+        );
+      }
+
       // Per-game log retention sweeper (+ file flusher when GAME_LOG_FILE=true).
       if (this.config.gameLog.enabled) {
         logger.gameLogStore.start();
@@ -1189,7 +1209,8 @@ class BraziliaServer {
 
         // Flush pending per-game log lines to disk before the process goes.
         await logger.gameLogStore.stop();
-        logger.info('✓ Per-game logs flushed');
+        await getGameEventRecorder().stop();
+        logger.info('✓ Per-game logs and match replays flushed');
 
         if (this.socketHandlers?._releaseOwnedRooms) {
           await this.socketHandlers._releaseOwnedRooms();

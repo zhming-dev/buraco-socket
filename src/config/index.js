@@ -101,10 +101,18 @@ const config = {
     enabled: process.env.GAME_LOG_ENABLED !== 'false',
     // Capture level for the per-room buffer, independent of LOG_LEVEL: the
     // console can stay at `info` while a game's own log keeps `debug` lines.
-    level: process.env.GAME_LOG_LEVEL || 'debug',
+    // Production defaults to `info` (the debug chatter is most of the volume,
+    // and the replay-grade game events live in the recorder, not here); dev
+    // and test keep `debug`.
+    level:
+      process.env.GAME_LOG_LEVEL ||
+      (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
     retentionMs: intWithDefault('GAME_LOG_RETENTION_MS', 2 * 60 * 60 * 1000),
     maxEntriesPerRoom: intWithDefault('GAME_LOG_MAX_ENTRIES_PER_ROOM', 4000),
     maxTotalEntries: intWithDefault('GAME_LOG_MAX_TOTAL_ENTRIES', 400000),
+    // Byte budget across all rooms (message + data text). Whichever of the two
+    // caps is hit first evicts the least recently written rooms.
+    maxTotalBytes: intWithDefault('GAME_LOG_MAX_TOTAL_BYTES', 128 * 1024 * 1024),
     // JSONL file sink so a game's log survives a restart. Follows LOG_FILE
     // unless GAME_LOG_FILE is set explicitly.
     fileEnabled:
@@ -112,6 +120,25 @@ const config = {
         ? process.env.LOG_FILE === 'true'
         : process.env.GAME_LOG_FILE === 'true',
     fileDirectory: process.env.GAME_LOG_DIR || `${process.env.LOG_DIR || './logs'}/games`,
+  },
+
+  // Per-MATCH game event recorder + replay (dev console → Table → Replay).
+  // One compact, replay-complete event stream per match, kept in memory while
+  // it is played and written as gzipped JSON to `directory` at every round end
+  // (never on the action path). See src/observability/GameEventRecorder.js and
+  // docs/GAME_LOGS.md.
+  gameReplay: {
+    enabled: process.env.GAME_REPLAY_ENABLED !== 'false',
+    // Disk persistence. Off under NODE_ENV=test unless asked for explicitly.
+    persist:
+      process.env.GAME_REPLAY_PERSIST === undefined
+        ? process.env.NODE_ENV !== 'test'
+        : process.env.GAME_REPLAY_PERSIST === 'true',
+    directory: process.env.GAME_REPLAY_DIR || `${process.env.LOG_DIR || './logs'}/replays`,
+    retentionMs: intWithDefault('GAME_REPLAY_RETENTION_MS', 7 * 24 * 60 * 60 * 1000),
+    maxBytesPerMatch: intWithDefault('GAME_REPLAY_MAX_BYTES_PER_MATCH', 4 * 1024 * 1024),
+    maxTotalBytes: intWithDefault('GAME_REPLAY_MAX_TOTAL_BYTES', 64 * 1024 * 1024),
+    maxDiskBytes: intWithDefault('GAME_REPLAY_MAX_DISK_BYTES', 2 * 1024 * 1024 * 1024),
   },
 
   // Server-side bot worker. The worker runs in a child process so a bot strategy

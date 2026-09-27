@@ -117,10 +117,14 @@ describe('per-game logs via SocketHandlers', () => {
 
       const draw = events.find((e) => e.data.game === 'draw').data;
       expect(draw.seat).to.equal(current.playerIndex);
-      expect(draw.card).to.include.keys('suit', 'rank', 'cardId');
+      // Cards travel as compact refs: rank + suit letter + '#' + cardId.
+      expect(draw.card).to.match(/^(10|[2-9AJQK])[HDCS]#\d+$|^JK#\d+$/);
 
       const discard = events.find((e) => e.data.game === 'discard').data;
-      expect(discard.card.cardId).to.equal(toDiscard.cardId);
+      expect(discard.card).to.match(new RegExp(`#${toDiscard.cardId}$`));
+      // Every [GAME] line names the match stream event it was recorded as.
+      expect(discard.match).to.be.a('string');
+      expect(discard.seq).to.be.greaterThan(draw.seq);
       expect(discard.nextSeat).to.equal(room.currentTurn);
       expect(discard.auto).to.equal(undefined);
     } finally {
