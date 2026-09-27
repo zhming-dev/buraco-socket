@@ -1885,7 +1885,8 @@
           r.icon = '🃏'; r.cls = 'turn';
           parts.push(txt('Round ' + (d.round || 1) + ' dealt'));
           if (Array.isArray(d.seats)) parts.push(txt(' — ' + d.seats.map(function (s) { return (s.name || s.playerId) + ' gets ' + s.cards; }).join(', ')));
-          parts.push(txt(' · ' + d.deck + ' in the deck · wells ' + (d.wells || []).join(' / ')));
+          if (d.deck != null) parts.push(txt(' · ' + d.deck + ' in the deck'));
+          if (Array.isArray(d.wells) && d.wells.length) parts.push(txt(' · wells ' + d.wells.join(' / ')));
           if (d.kf && d.kf.firstTurn && d.kf.firstTurn.rounds && d.kf.firstTurn.rounds.length) {
             parts.push(txt(' · high card: '));
             d.kf.firstTurn.rounds.forEach(function (round, i) {

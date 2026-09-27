@@ -640,7 +640,7 @@
           h('div', {
             class: 'hint',
             style: { marginTop: '6px' },
-            text: 'Points are +1 a win, −1 a loss. Voided games are already taken out; a dismissal puts them back. "Week/month of the flag" uses this browser\'s calendar.',
+            text: 'Points depend on the table: 1 vs 1 scores ±1 (One Hand / 1505) or ±2 (2000), 2 vs 2 scores ±1 / ±2 / ±4. Voided games are already taken out; a dismissal puts them back. "Week/month of the flag" uses this browser\'s calendar.',
           })
         );
       });

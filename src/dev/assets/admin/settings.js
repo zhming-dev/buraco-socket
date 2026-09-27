@@ -53,6 +53,51 @@
     return key === 'id' || /(_at|_by)$/.test(key);
   }
 
+  // wlive-api's real answer also carries `defaults` (the shipped value of every
+  // key) and `overrides` ({key: {value, updated_by, updated_at}} for the keys an
+  // admin has set). They describe the fields rather than being settings, so they
+  // feed each field's hint and the per-field "Use default" instead of being
+  // listed under "Other settings".
+  var DESCRIPTOR_KEYS = ['defaults', 'overrides'];
+
+  function fieldHint(k, d) {
+    var parts = [k.hint];
+    var def = d.defaults && typeof d.defaults === 'object' ? d.defaults[k.key] : undefined;
+    var ov = d.overrides && typeof d.overrides === 'object' ? d.overrides[k.key] : undefined;
+    if (def !== undefined) parts.push('Default: ' + (def == null ? 'none' : A.fmtNumber ? A.fmtNumber(def) : def) + '.');
+    if (ov && typeof ov === 'object') {
+      parts.push(
+        'Set' +
+          (ov.updated_by ? ' by ' + ov.updated_by : '') +
+          (ov.updated_at ? ' ' + A.relTime(ov.updated_at) : '') +
+          '.'
+      );
+    } else if (d.overrides && typeof d.overrides === 'object') {
+      parts.push('Using the default.');
+    }
+    return parts.join(' ');
+  }
+
+  /** PUT {key: null}: wlive-api drops the override and the default applies. */
+  function useDefault(key) {
+    if (st.saving) return;
+    st.saving = true;
+    var body = {};
+    body[key] = null;
+    A.api.put('settings', body).then(
+      function (res) {
+        st.saving = false;
+        if (res.data && typeof res.data === 'object') st.data = res.data;
+        A.toast(key + ' is back to its default');
+        render();
+      },
+      function (err) {
+        st.saving = false;
+        A.showErrors(err, ui.fields, ui.errBox, { clearOnInput: false });
+      }
+    );
+  }
+
   function mount(root) {
     ui.refresh = h('button', { class: 'small', text: 'Reload', on: { click: load } });
     root.appendChild(
@@ -130,17 +175,36 @@
         sync(k.key);
       };
       ui.inputs[k.key] = input;
+      var ov = d.overrides && typeof d.overrides === 'object' ? d.overrides[k.key] : undefined;
       ui.fields[k.key] = A.field(
-        h('span', null, k.label, h('span', { class: 'hint', text: '  ' + k.key })),
+        h(
+          'span',
+          null,
+          k.label,
+          h('span', { class: 'hint', text: '  ' + k.key }),
+          ov && typeof ov === 'object'
+            ? h('button', {
+                class: 'small ghost',
+                style: { marginLeft: '8px' },
+                text: 'Use default',
+                on: {
+                  click: function (ev) {
+                    ev.preventDefault();
+                    useDefault(k.key);
+                  },
+                },
+              })
+            : null
+        ),
         input,
-        { hint: k.hint }
+        { hint: fieldHint(k, d) }
       );
       grid.appendChild(ui.fields[k.key].root);
     });
     card.appendChild(grid);
 
     var extras = Object.keys(d).filter(function (key) {
-      return KNOWN_KEYS.indexOf(key) === -1 && !isMeta(key);
+      return KNOWN_KEYS.indexOf(key) === -1 && DESCRIPTOR_KEYS.indexOf(key) === -1 && !isMeta(key);
     });
     if (extras.length) {
       card.appendChild(
