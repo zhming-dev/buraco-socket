@@ -145,7 +145,7 @@ no longer accepted; the dev console downloads through `fetch()` with the header.
 
 | endpoint | returns |
 |---|---|
-| `GET /dev/api/matches` | recent matches, live and finished, memory + disk, newest first. `?roomId=` `?status=live|finished` `?limit=` (max 200) `?offset=` |
+| `GET /dev/api/matches` | recent matches, live and finished, memory + disk, newest first. `?roomId=` `?status=live|finished` `?limit=` (max 200) `?offset=`. Lookup of a backend game: `?backendMatchId=<roomId>:<createdAt ms>` (the settled `match_id`; a match resumed after a restart has several streams under it), or `?playerIds=<id>,<id>&at=<ISO or ms>` (every id seated, the match window ± `windowMs`, default 15 min, contains `at`; ordered by how close the match end is). `stats.retentionMs` tells a lookup miss "gone" from "never here" |
 | `GET /dev/api/matches/<matchId>` | `{success, live, header, rounds, events}`. `?since=<seq>` only newer events (live follow). A finished match on disk is passed through gzipped (`Content-Encoding: gzip`, the stored `{v, header, events}` document) when the client accepts gzip. `?download=1` sets a file name. |
 | `GET /dev/api/matches/<matchId>/state?at=<seq>` | the table rebuilt at that event, shaped like `GET /dev/api/rooms/<roomId>` (`players[].hand/melds`, `deck`, `deadPiles`, `discardPile`, `currentTurn`, `teamScores`...) plus `event`, `phase`, `verified` |
 | `GET /dev/api/logs` | rooms that have a log ring (memory + disk index) |
@@ -156,7 +156,12 @@ The replay engine (`src/observability/ReplayEngine.js`) is pure: `reconstruct`,
 
 ## Dev console
 
-- **Replays** (sidebar): recent matches. Click one to replay it on the table.
+- **Replays** (sidebar; the *Replays* section lists more and filters by room id, player id or
+  backend match id): recent matches. Click one to replay it on the table. `#/replays/<matchId>`
+  opens one directly.
+- **Review** (Buraco admin): every game of a leaderboard collusion flag gets a *Replay* link when
+  this socket still has the recording (looked up by the pair's player ids + the settle time, since
+  the backend rows carry no match id yet), or says it is gone (past retention) / not on this socket.
 - **Table → Replay** (also the *Replay* button next to a room): round selector,
   ⏮ ◀ ▶/⏸ ▶▏ ⏭, a slider over every event, speed, the event as a sentence,
   `✓ table verified` on round ends. Keyboard: ← → and space. A live match can

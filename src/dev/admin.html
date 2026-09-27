@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Brazilia — Dev Console</title>
+<title>Brazilia — Admin</title>
 <style>
   :root {
     --bg: #0e1116;
@@ -387,29 +387,57 @@
   .rb-event .fan { display: inline-flex; gap: 2px; vertical-align: middle; }
   .rb-event .seq { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 </style>
+<!-- Section nav + the Buraco admin pages (Overrides, Skins, Stickers, Review, Settings) -->
+<link rel="stylesheet" href="/dev/assets/admin/admin.css">
 </head>
 <body>
 
-<header>
-  <h1>🃏 Brazilia <span>Dev Console</span></h1>
+<header id="top">
+  <h1>🃏 Brazilia <span>Admin</span></h1>
   <span id="env-badge" class="badge neutral">—</span>
   <span id="maintenance-badge" class="badge neutral">maintenance: unknown</span>
   <div class="spacer"></div>
+  <span id="admin-actor-slot"></span>
   <button id="btn-ops">Server</button>
   <div class="secret-box">
     <input type="password" id="secret" placeholder="webhook secret" autocomplete="off">
     <button class="primary" id="btn-save-secret">Connect</button>
   </div>
+  <nav class="sections" id="sections">
+    <div class="sec-group">
+      <a href="#/live" data-section="live">Live rooms</a>
+      <a href="#/replays" data-section="replays">Replays</a>
+      <a href="#/logs" data-section="logs">Logs</a>
+    </div>
+    <div class="sec-group">
+      <a href="#/overrides" data-section="overrides">Overrides</a>
+      <a href="#/skins" data-section="skins">Skins</a>
+      <a href="#/stickers" data-section="stickers">Stickers</a>
+      <a href="#/review" data-section="review">Review <span class="nav-count" id="review-count"></span></a>
+      <a href="#/settings" data-section="settings">Settings</a>
+    </div>
+    <div class="spacer"></div>
+    <span class="admin-api-status" id="admin-api-status"></span>
+  </nav>
 </header>
 
-<main>
-  <aside class="sidebar">
-    <div class="side-h">Games <span class="hint dim" id="rooms-refresh"></span></div>
-    <div id="rooms-list"><div class="empty">Connect to see games</div></div>
-    <div class="side-h">Replays <span class="hint" id="replays-count"></span></div>
-    <div id="replay-list"><div class="empty">—</div></div>
-    <div class="side-h">Finished</div>
-    <div id="ended-list"><div class="empty">—</div></div>
+<main id="tables-view">
+  <aside class="sidebar" id="sidebar">
+    <div class="side-group" id="side-games">
+      <div class="side-h">Games <span class="hint dim" id="rooms-refresh"></span></div>
+      <div id="rooms-list"><div class="empty">Connect to see games</div></div>
+    </div>
+    <div class="side-group" id="side-replays">
+      <div class="side-h">Replays <span class="hint" id="replays-count"></span></div>
+      <div class="replay-filter" id="replay-filter-box">
+        <input type="text" id="replay-filter" placeholder="room id, player id or backend match id" autocomplete="off" spellcheck="false">
+      </div>
+      <div id="replay-list"><div class="empty">—</div></div>
+    </div>
+    <div class="side-group" id="side-finished">
+      <div class="side-h">Finished</div>
+      <div id="ended-list"><div class="empty">—</div></div>
+    </div>
   </aside>
 
   <section>
@@ -489,6 +517,9 @@
     </div>
   </section>
 </main>
+
+<!-- Buraco admin pages, rendered by /dev/assets/admin/*.js -->
+<div class="admin-pages" id="admin-pages" hidden></div>
 
 <div class="modal-bg" id="ops-modal">
   <div class="modal">
@@ -1039,12 +1070,14 @@
 
   // ---- workspace tabs -----------------------------------------------------------
 
-  function showTab(name) {
+  // fromSection: the nav asked for this tab (else a click here moves the nav).
+  function showTab(name, fromSection) {
     $('tab-detail').classList.toggle('active', name === 'detail');
     $('tab-logs').classList.toggle('active', name === 'logs');
     $('pane-detail').classList.toggle('active', name === 'detail');
     $('pane-logs').classList.toggle('active', name === 'logs');
     if (name === 'logs') gameLogs.onShown();
+    if (!fromSection && inTables()) markSection(name === 'logs' ? 'logs' : (replay.active() ? 'replays' : 'live'));
   }
   $('tab-detail').onclick = function () { showTab('detail'); };
   $('tab-logs').onclick = function () { showTab('logs'); };
@@ -2233,7 +2266,7 @@
 
     function tick() {
       if (!roomId || loading || !$('logs-follow').checked || !secret || restarting) return;
-      if (!$('pane-logs').classList.contains('active')) return; // hidden tab: don't burn requests
+      if (!$('pane-logs').classList.contains('active') || !inTables()) return; // hidden tab: don't burn requests
       loading = true;
       var q = query();
       var stick = atBottom();
@@ -2264,7 +2297,7 @@
     }
 
     function refreshList() {
-      if (!secret) return;
+      if (!secret || !inTables()) return; // an admin page is showing: the lists are hidden
       api('/dev/api/logs').then(function (res) {
         var rooms = res.rooms || [];
         var current = roomSel.value;
@@ -2524,6 +2557,7 @@
         $('rb-title').title = matchId + (st.header.backendMatchId ? ' · backend match ' + st.header.backendMatchId : '');
         fillRounds();
         $('replaybar').style.display = '';
+        if (inTables()) markSection('replays', matchId);
         if (!st.events.length) { toast('This match has no events yet'); return true; }
         var first = st.rounds.length ? st.rounds[0].index : 0;
         go(opts.at === 'end' || st.live ? st.events.length - 1 : first);
@@ -2549,6 +2583,7 @@
       $('replaybar').style.display = 'none';
       $('rb-event').style.display = 'none';
       $('tools').style.display = '';
+      if (!opts.quiet && section === 'replays') markSection('live');
       if (opts.keepRoom) return;
       lastDetail = null;
       if (selectedRoomId) {
@@ -2558,13 +2593,28 @@
       }
     }
 
+    // The Replays section lists more, and takes a filter: a backend match id
+    // (<roomId>:<ms>), a player id (digits) or a room id.
+    function listQuery() {
+      var full = section === 'replays';
+      var params = ['limit=' + (full ? 60 : 15)];
+      var f = full ? ($('replay-filter').value || '').trim() : '';
+      if (f) {
+        if (/^[^:\s]+:\d{10,}$/.test(f)) params.push('backendMatchId=' + encodeURIComponent(f));
+        else if (/^\d+$/.test(f)) params.push('playerIds=' + encodeURIComponent(f));
+        else params.push('roomId=' + encodeURIComponent(f));
+      }
+      return { qs: params.join('&'), filtered: !!f };
+    }
+
     function refreshList() {
-      if (!secret) return;
-      api('/dev/api/matches?limit=15').then(function (res) {
+      if (!secret || !inTables()) return;
+      var q = listQuery();
+      api('/dev/api/matches?' + q.qs).then(function (res) {
         var list = $('replay-list');
         var rows = res.matches || [];
-        setText($('replays-count'), res.total ? '· ' + res.total + (res.stats && res.stats.persist ? ' kept on disk' : ' in memory') : '');
-        if (!rows.length) { list.innerHTML = '<div class="empty">no recorded match yet</div>'; return; }
+        setText($('replays-count'), res.total ? '· ' + res.total + (q.filtered ? ' found' : (res.stats && res.stats.persist ? ' kept on disk' : ' in memory')) : '');
+        if (!rows.length) { list.innerHTML = '<div class="empty">' + (q.filtered ? 'no match found' : 'no recorded match yet') + '</div>'; return; }
         list.innerHTML = '';
         rows.forEach(function (m) {
           var item = el('button', 'room-item' + (m.live ? '' : ' ended'));
@@ -2615,7 +2665,7 @@
       if (st) download('/dev/api/matches/' + encodeURIComponent(st.matchId) + '?download=1', st.matchId + '.json');
     };
     document.addEventListener('keydown', function (e) {
-      if (!st || !$('pane-detail').classList.contains('active')) return;
+      if (!st || !$('pane-detail').classList.contains('active') || !inTables()) return;
       var tag = (e.target && e.target.tagName) || '';
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       if (e.key === 'ArrowRight') { pause(); go(st.index + 1); e.preventDefault(); }
@@ -2641,6 +2691,7 @@
     api('/dev/api/status').then(renderStatus).catch(function (e) {
       if (e.status === 401) { toast('Wrong webhook secret', true); stopPolling(); }
     });
+    if (!inTables()) return; // an admin page is showing: the game list is hidden
     api('/dev/api/rooms').then(function (body) {
       renderRooms(body);
       $('rooms-refresh').textContent = '· refreshes every 2s · ' + new Date().toLocaleTimeString();
@@ -2850,6 +2901,121 @@
   $('btn-restart-real').onclick = function () { restartProcess(false); };
   $('btn-restart-keep').onclick = function () { restartProcess(true); };
 
+  // ---- sections -------------------------------------------------------------------------
+  //
+  // Live rooms / Replays / Logs configure the table view above (which sidebar
+  // list leads, which workspace tab). Overrides / Skins / Stickers / Review /
+  // Settings are the Buraco admin pages: /dev/assets/admin/*.js render them
+  // into #admin-pages and reach this page through window.DevConsole.
+
+  var TABLE_SECTIONS = { live: 1, replays: 1, logs: 1 };
+  var ADMIN_SECTIONS = { overrides: 1, skins: 1, stickers: 1, review: 1, settings: 1 };
+  var section = 'live';
+  var connectHooks = [];
+
+  function inTables() { return !!TABLE_SECTIONS[section]; }
+
+  // Nav highlight + URL only (the view itself is not touched).
+  function markSection(name, sub) {
+    section = name;
+    document.body.setAttribute('data-section', name);
+    document.querySelectorAll('#sections a[data-section]').forEach(function (a) {
+      a.classList.toggle('active', a.dataset.section === name);
+    });
+    var hash = '#/' + name + (sub ? '/' + encodeURIComponent(sub) : '');
+    if (location.hash !== hash && history.replaceState) history.replaceState(null, '', hash);
+  }
+
+  function showSection(name) {
+    if (!TABLE_SECTIONS[name] && !ADMIN_SECTIONS[name]) name = 'live';
+    var wasTables = inTables();
+    markSection(name);
+    var tables = !!TABLE_SECTIONS[name];
+    $('tables-view').hidden = !tables;
+    $('admin-pages').hidden = tables;
+    if (window.BuracoAdmin) window.BuracoAdmin.show(tables ? null : name);
+    if (!tables) return;
+    showTab(name === 'logs' ? 'logs' : 'detail', true);
+    if (secret && !wasTables) { poll(); gameLogs.start(); }
+    if (secret && name === 'replays') replay.refreshList();
+  }
+
+  function openReplay(matchId, roomId) {
+    showSection('replays');
+    if (roomId) {
+      selectRoom(String(roomId), { noLoad: true });
+      gameLogs.open(String(roomId), { quiet: true });
+    }
+    showTab('detail', true);
+    return replay.open(matchId).then(function () { return true; }, function (e) {
+      toast('Replay: ' + e.message, true);
+      return false;
+    });
+  }
+
+  function openRoom(roomId) {
+    showSection('live');
+    selectRoom(String(roomId));
+    showTab('detail', true);
+    gameLogs.open(String(roomId), { quiet: true });
+  }
+
+  function routeFromHash() {
+    var parts = String(location.hash || '').replace(/^#\/?/, '').split('/');
+    var name = parts[0] || 'live';
+    showSection(name);
+    if (name === 'replays' && parts[1] && secret) openReplay(decodeURIComponent(parts[1]));
+  }
+
+  // A nav click is a history entry (Back returns to the previous section);
+  // everything else only rewrites the current one.
+  document.querySelectorAll('#sections a[data-section]').forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      e.preventDefault();
+      if (a.dataset.section !== section && history.pushState) history.pushState(null, '', '#/' + a.dataset.section);
+      showSection(a.dataset.section);
+    });
+  });
+  window.addEventListener('hashchange', function () {
+    var name = String(location.hash || '').replace(/^#\/?/, '').split('/')[0];
+    if (name && name !== section) routeFromHash();
+  });
+  window.addEventListener('popstate', function () {
+    var name = String(location.hash || '').replace(/^#\/?/, '').split('/')[0] || 'live';
+    if (name !== section) routeFromHash();
+  });
+
+  $('replay-filter').addEventListener('input', function () {
+    clearTimeout(this._t);
+    this._t = setTimeout(function () { replay.refreshList(); }, 300);
+  });
+
+  // The sticky sidebar sits under the (wrapping) header.
+  function syncHeaderHeight() {
+    document.documentElement.style.setProperty('--header-h', $('top').offsetHeight + 'px');
+  }
+  if (window.ResizeObserver) new ResizeObserver(syncHeaderHeight).observe($('top'));
+  syncHeaderHeight();
+
+  // What the admin pages (/dev/assets/admin/*.js) use from this page.
+  window.DevConsole = {
+    api: api,
+    download: download,
+    el: el,
+    txt: txt,
+    toast: toast,
+    log: log,
+    plural: plural,
+    fmtTime: fmtTime,
+    secret: function () { return secret; },
+    section: function () { return section; },
+    showSection: showSection,
+    openReplay: openReplay,
+    openRoom: openRoom,
+    onConnect: function (fn) { connectHooks.push(fn); },
+  };
+  document.addEventListener('DOMContentLoaded', routeFromHash);
+
   // ---- connect ------------------------------------------------------------------------
 
   secretInput.value = secret;
@@ -2858,6 +3024,7 @@
     localStorage.setItem(SECRET_KEY, secret);
     if (secret) { startPolling(); toast('Connected — polling rooms.'); }
     else { stopPolling(); toast('Secret cleared.'); }
+    connectHooks.forEach(function (fn) { try { fn(secret); } catch (e) { /* a page's problem, not ours */ } });
   };
   secretInput.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') $('btn-save-secret').click();
@@ -2866,5 +3033,13 @@
   if (secret) startPolling();
 })();
 </script>
+<!-- Buraco admin pages: they call wlive-api through this socket's /dev/api/admin proxy -->
+<script src="/dev/assets/admin/common.js"></script>
+<script src="/dev/assets/admin/skin_look.js"></script>
+<script src="/dev/assets/admin/overrides.js"></script>
+<script src="/dev/assets/admin/skins.js"></script>
+<script src="/dev/assets/admin/stickers.js"></script>
+<script src="/dev/assets/admin/review.js"></script>
+<script src="/dev/assets/admin/settings.js"></script>
 </body>
 </html>

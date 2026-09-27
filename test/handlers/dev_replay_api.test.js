@@ -151,6 +151,68 @@ describe('dev console API', () => {
       expect(end.deckCount).to.equal(room.deck.count);
     });
 
+    it('finds a backend game by its match id (header.backendMatchId)', async () => {
+      const a = playedMatch(recorder, 'room-f');
+      playedMatch(recorder, 'room-g');
+      await recorder.flushAll();
+      const backendMatchId = `room-f:${a.room.createdAt.getTime()}`;
+      const r = res();
+      await handleDevMatches(req(`/dev/api/matches?backendMatchId=${encodeURIComponent(backendMatchId)}`), r, { recorder });
+      const body = r.json();
+      expect(body.total).to.equal(1);
+      expect(body.matches[0].matchId).to.equal(a.matchId);
+      expect(body.matches[0].backendMatchId).to.equal(backendMatchId);
+      expect(body.stats).to.include({ enabled: true, persist: true });
+      expect(body.stats.retentionMs).to.be.a('number');
+
+      // Off disk only (a restart later) it is still found, through the meta sidecar.
+      const fresh = new GameEventRecorder({ persist: true, directory: dir });
+      const r2 = res();
+      await handleDevMatches(req(`/dev/api/matches?backendMatchId=${encodeURIComponent(backendMatchId)}`), r2, { recorder: fresh });
+      expect(r2.json().matches.map((m) => [m.matchId, m.onDisk, m.inMemory])).to.deep.equal([[a.matchId, true, false]]);
+
+      const r3 = res();
+      await handleDevMatches(req('/dev/api/matches?backendMatchId=room-f:1'), r3, { recorder });
+      expect(r3.json().total).to.equal(0);
+    });
+
+    it('finds a backend game by its players and when it was settled', async () => {
+      const clock = { now: Date.parse('2026-09-20T10:00:00Z') };
+      const timed = new GameEventRecorder({ now: () => clock.now });
+      const at = (hhmm) => Date.parse(`2026-09-20T${hhmm}:00Z`);
+      const match = (roomId, ids, from, to) => {
+        const room = new GameRoom({ roomId, maxPlayers: 2 });
+        ids.forEach((id, i) =>
+          room.addPlayer(new PlayerSession({ playerId: id, playerName: id.toUpperCase(), playerIndex: i, socketId: `s-${roomId}-${i}` }))
+        );
+        room.startGame();
+        room.dealCards();
+        clock.now = at(from);
+        const { matchId } = timed.record(room, 'deal', { round: 1 });
+        clock.now = at(to);
+        timed.record(room, 'match_end', { round: 1 });
+        return matchId;
+      };
+      const a = match('room-h', ['101', '202'], '10:00', '10:20');
+      const b = match('room-i', ['101', '202'], '12:00', '12:30');
+      const c = match('room-j', ['101', '909'], '10:05', '10:25');
+
+      const lookup = async (qs) => {
+        const r = res();
+        await handleDevMatches(req(`/dev/api/matches?${qs}`), r, { recorder: timed });
+        return r.json().matches.map((m) => m.matchId);
+      };
+      const iso = (hhmm) => encodeURIComponent(new Date(at(hhmm)).toISOString());
+
+      expect(await lookup(`playerIds=101,202&at=${iso('10:21')}`)).to.deep.equal([a]);
+      expect(await lookup(`playerIds=202,101&at=${at('12:31')}`)).to.deep.equal([b]);
+      expect(await lookup(`playerIds=101,202&at=${iso('11:10')}`)).to.deep.equal([]);
+      expect(await lookup(`playerIds=101,202&at=${iso('10:21')}&windowMs=0`)).to.deep.equal([]);
+      // closest match END first
+      expect(await lookup(`playerIds=101&at=${iso('10:21')}`)).to.deep.equal([a, c]);
+      expect(await lookup(`playerIds=101,202,909&at=${iso('10:21')}`)).to.deep.equal([]);
+    });
+
     it('404s an unknown or unsafe match id', async () => {
       for (const id of ['nope-123', '..%2F..%2Fetc%2Fpasswd']) {
         const r = res();

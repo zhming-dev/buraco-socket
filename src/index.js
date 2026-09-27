@@ -56,6 +56,7 @@ const metrics = require('./observability/metrics');
 const OccupancyMonitor = require('./observability/OccupancyMonitor');
 const { getGameEventRecorder } = require('./observability/GameEventRecorder');
 const { isDevAuthorized, sendRoomLogs, handleDevMatches } = require('./dev/devApi');
+const { createDevAdminProxy, isAdminProxyPath } = require('./dev/adminProxy');
 
 class BraziliaServer {
   constructor() {
@@ -158,26 +159,55 @@ class BraziliaServer {
           return;
         }
 
-        // Static art for the dev console's 1:1 table (court-card faces copied
-        // from the mobile SDK, downscaled). No secrets involved; the allowlist
-        // regex keeps this from ever serving anything outside src/dev/assets.
-        const devAsset = req.method === 'GET' && req.url.match(/^\/dev\/assets\/([a-z0-9_]+\/)?([a-z0-9_]+\.(png|jpg|svg))(?:\?|$)/);
+        // Static files for the dev console: the 1:1 table's art (court-card
+        // faces copied from the mobile SDK, downscaled) and the admin pages'
+        // scripts/styles (src/dev/assets/admin). No secrets involved; the
+        // allowlist regex keeps this from ever serving anything outside
+        // src/dev/assets. Scripts/styles revalidate so a deploy shows at once.
+        const devAsset = req.method === 'GET' && req.url.match(/^\/dev\/assets\/([a-z0-9_]+\/)?([a-z0-9_]+\.(png|jpg|svg|js|css))(?:\?|$)/);
         if (devAsset) {
           const rel = path.join(devAsset[1] || '', devAsset[2]);
           const file = path.join(__dirname, 'dev', 'assets', rel);
+          const types = {
+            png: 'image/png',
+            jpg: 'image/jpeg',
+            svg: 'image/svg+xml',
+            js: 'text/javascript; charset=utf-8',
+            css: 'text/css; charset=utf-8',
+          };
           fs.readFile(file, (err, buf) => {
             if (err) {
               sendJson(res, 404, { error: 'Not Found' });
               return;
             }
             res.statusCode = 200;
+            res.setHeader('Content-Type', types[devAsset[3]]);
             res.setHeader(
-              'Content-Type',
-              devAsset[3] === 'png' ? 'image/png' : devAsset[3] === 'jpg' ? 'image/jpeg' : 'image/svg+xml'
+              'Cache-Control',
+              devAsset[3] === 'js' || devAsset[3] === 'css' ? 'no-cache' : 'public, max-age=86400'
             );
-            res.setHeader('Cache-Control', 'public, max-age=86400');
             res.end(buf);
           });
+          return;
+        }
+
+        // Buraco admin (dev console → Overrides / Skins / Stickers / Review /
+        // Settings): /dev/api/admin/* is proxied to wlive-api's
+        // /api/buraco/admin/* with the admin secret + the operator's name added
+        // here. Same dev auth as every /dev/api call (fails closed); only the
+        // allowlisted admin paths go through. See src/dev/adminProxy.js.
+        if (isAdminProxyPath(req.url)) {
+          if (!this._devAdminProxy) {
+            this._devAdminProxy = createDevAdminProxy({
+              baseUrl: this.config.wliveAdmin.apiBase,
+              secret: this.config.wliveAdmin.secret,
+              timeoutMs: this.config.wliveAdmin.timeoutMs,
+              maxBodyBytes: this.config.wliveAdmin.maxBodyBytes,
+              devSecret: () => this.config.security.webhookSecret,
+              logger,
+            });
+          }
+          this._devAdminProxy.handle(req, res);
           return;
         }
 

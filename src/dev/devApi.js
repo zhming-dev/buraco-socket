@@ -86,11 +86,17 @@ async function handleDevMatches(req, res, { recorder, liveness }) {
   const query = url.searchParams;
 
   if (parts.length === 3) {
+    // Lookup filters (see GameEventRecorder.list): the admin Review page finds
+    // a backend game's replay by `backendMatchId`, or by `playerIds` + `at`.
     const listing = await recorder.list({
       roomId: query.get('roomId'),
       status: query.get('status'),
       limit: query.get('limit'),
       offset: query.get('offset'),
+      backendMatchId: query.get('backendMatchId'),
+      playerIds: query.get('playerIds'),
+      at: query.get('at'),
+      windowMs: query.get('windowMs'),
     });
     const matches = listing.matches.map((row) => ({
       ...row,

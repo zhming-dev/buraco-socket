@@ -63,6 +63,16 @@ function safeId(text) {
     .slice(0, 96);
 }
 
+/** An instant given as epoch ms (number or digit string) or an ISO date; null otherwise. */
+function parseInstant(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const text = String(value).trim();
+  if (/^\d{10,16}$/.test(text)) return Number(text);
+  const ms = Date.parse(text);
+  return Number.isFinite(ms) ? ms : null;
+}
+
 class GameEventRecorder {
   /**
    * @param {object} [options]
@@ -630,7 +640,18 @@ class GameEventRecorder {
   /**
    * Recent matches, newest activity first: live and finished in memory plus
    * whatever is on disk.
-   * @param {{roomId?: string, limit?: number, offset?: number, status?: 'live'|'finished'}} [opts]
+   *
+   * Lookup filters (the admin Review page finds the replay of a backend game):
+   * - `backendMatchId` — the backend's `match_id` (`<roomId>:<createdAt ms>`,
+   *   header.backendMatchId). A restart mid-match leaves several streams (the
+   *   original + a resumed one) under the same id; all of them match.
+   * - `playerIds` — every id (array or comma list) must hold a seat.
+   * - `at` (ISO or epoch ms) — the match was being played around then: its
+   *   [startedAt, endedAt|lastAt] window widened by `windowMs` (default 15 min,
+   *   a settlement can land a little after the last event) contains `at`.
+   *   Results are then ordered by how close the match END is to `at`.
+   * @param {{roomId?: string, limit?: number, offset?: number, status?: 'live'|'finished',
+   *   backendMatchId?: string, playerIds?: string|string[], at?: string|number, windowMs?: number}} [opts]
    */
   async list(opts = {}) {
     await this.refreshDiskIndex().catch(() => {});
@@ -663,7 +684,37 @@ class GameEventRecorder {
     }
     if (opts.status === 'live') filtered = filtered.filter((r) => r.live);
     else if (opts.status === 'finished') filtered = filtered.filter((r) => !r.live);
-    filtered.sort((a, b) => (a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : 0));
+    if (opts.backendMatchId != null && opts.backendMatchId !== '') {
+      const wanted = String(opts.backendMatchId);
+      filtered = filtered.filter((r) => r.backendMatchId != null && String(r.backendMatchId) === wanted);
+    }
+    const playerIds = (Array.isArray(opts.playerIds) ? opts.playerIds : String(opts.playerIds ?? '').split(','))
+      .map((id) => String(id ?? '').trim())
+      .filter(Boolean);
+    if (playerIds.length) {
+      filtered = filtered.filter((r) => {
+        const seated = new Set((r.seats || []).map((s) => String(s && s.id)));
+        return playerIds.every((id) => seated.has(id));
+      });
+    }
+    const at = parseInstant(opts.at);
+    if (at !== null) {
+      const windowRaw = opts.windowMs == null || opts.windowMs === '' ? NaN : Number(opts.windowMs);
+      const windowMs = Math.min(
+        24 * 60 * 60 * 1000,
+        Math.max(0, Number.isFinite(windowRaw) ? windowRaw : 15 * 60 * 1000)
+      );
+      const endOf = (r) => Date.parse(r.endedAt || r.lastAt || r.startedAt);
+      filtered = filtered.filter((r) => {
+        const start = Date.parse(r.startedAt);
+        const end = endOf(r);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+        return start - windowMs <= at && at <= end + windowMs;
+      });
+      filtered.sort((a, b) => Math.abs(endOf(a) - at) - Math.abs(endOf(b) - at));
+    } else {
+      filtered.sort((a, b) => (a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : 0));
+    }
     const limit = Math.min(200, Math.max(1, Number(opts.limit) || 50));
     const offset = Math.max(0, Number(opts.offset) || 0);
     return {
