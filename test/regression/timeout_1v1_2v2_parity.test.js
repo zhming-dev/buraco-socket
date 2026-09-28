@@ -121,17 +121,16 @@ describe('finite turn timeout parity between 1v1 and 2v2', () => {
     return matches[matches.length - 1];
   }
 
-  function assertNextTurn(previousIndex, { discarded = true } = {}) {
+  function assertNextTurn(previousIndex) {
     const { room } = ctx;
     const nextIndex = (previousIndex + 1) % room.maxPlayers;
     expect(room.isInProgress()).to.equal(true);
     expect(room.currentTurn).to.equal(nextIndex);
     expect(lastFrame('turn_timer_expired').payload.playerIndex).to.equal(previousIndex);
-    if (discarded) expect(lastFrame('card_discarded').payload.playerIndex).to.equal(previousIndex);
-    else {
-      expect(lastFrame('card_discarded'), 'the existing offline rule skips without discarding').to.not.exist;
-      expect(lastFrame('card_drawn'), 'the existing offline rule skips without drawing').to.not.exist;
-    }
+    // Every expiry ends in a THROW by the seat that ran out of time — never a
+    // bare turn change (the old offline rule skipped with no take and no throw).
+    expect(lastFrame('card_discarded').payload.playerIndex).to.equal(previousIndex);
+    expect(lastFrame('turn_changed').payload.forced, 'no force-advance').to.not.equal(true);
     expect(lastFrame('turn_changed').payload).to.include({
       previousPlayerIndex: previousIndex, newPlayerIndex: nextIndex,
     });
@@ -170,7 +169,7 @@ describe('finite turn timeout parity between 1v1 and 2v2', () => {
 
     for (let index = 0; index < count; index += 1) {
       for (const hasDrawn of [false, true]) {
-        it(`${mode}: seat ${index} disconnects ${hasDrawn ? 'after' : 'before'} drawing and expires at its original deadline`, async () => {
+        it(`${mode}: seat ${index} disconnects ${hasDrawn ? 'after' : 'before'} drawing, expires at its original deadline and is AUTO-PLAYED`, async () => {
           const { room } = setup(count, index, hasDrawn);
           const deadline = room.turnTimerDeadline;
           const handle = room.turnTimerTickHandle;
@@ -183,14 +182,20 @@ describe('finite turn timeout parity between 1v1 and 2v2', () => {
           expect(room.getTurnTimeRemaining()).to.equal(11);
           await expire();
 
-          expect(room.deck.count).to.equal(deckBefore);
-          expect(room.discardPile).to.have.length(0);
-          expect(room.playerHands.get(`p${index}`)).to.have.length(hasDrawn ? 3 : 2);
+          // Take (only when the seat had not drawn yet) and throw, exactly like
+          // a present player who let the clock run out.
+          expect(room.deck.count).to.equal(hasDrawn ? deckBefore : deckBefore - 1);
+          expect(room.discardPile).to.have.length(1);
+          expect(room.playerHands.get(`p${index}`)).to.have.length(2);
+          if (!hasDrawn) {
+            const drawn = lastFrame('card_drawn');
+            expect(drawn.payload).to.include({ playerIndex: index, fromDeck: true, card: null });
+          }
+          // The server's throw is no sign of life: the seat stays offline.
           expect(room.getPlayer(`p${index}`).isConnected).to.equal(false);
           expect(room.getPlayer(`p${index}`).socketId).to.equal(null);
-          expect(room.offlineStrikes.get(`p${index}`)).to.equal(1);
           expect(room.hostPlayerId).to.equal('p0');
-          assertNextTurn(index, { discarded: false });
+          assertNextTurn(index);
         });
       }
 
@@ -207,7 +212,6 @@ describe('finite turn timeout parity between 1v1 and 2v2', () => {
         expect(room.getTurnTimeRemaining()).to.equal(12);
         await expire();
 
-        expect(room.offlineStrikes.get(`p${index}`) || 0).to.equal(0);
         expect(room.getPlayer(`p${index}`).isConnected).to.equal(false);
         assertNextTurn(currentIndex);
       });
@@ -238,7 +242,6 @@ describe('finite turn timeout parity between 1v1 and 2v2', () => {
       });
       await expire();
 
-      expect(room.offlineStrikes.get(`p${currentIndex}`) || 0).to.equal(0);
       assertNextTurn(currentIndex);
     });
   }

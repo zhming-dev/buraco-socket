@@ -213,9 +213,6 @@ class FailureManager extends EventEmitter {
         roundNumber: room.roundNumber || 0,
         lastRoundWinnerIndex:
           room.lastRoundWinnerIndex === undefined ? null : room.lastRoundWinnerIndex,
-        // Per-round absence record. Losing it on a host migration would hand a
-        // player who keeps dropping out a clean slate they did not earn.
-        offlineStrikes: this._serializeMap(room.offlineStrikes),
         teamRequiredMeldPoints: this._serializeMap(room.teamRequiredMeldPoints),
         teamTurnPenalty: this._serializeMap(room.teamTurnPenalty),
         cumulativeScores: this._serializeMap(room.cumulativeScores),
@@ -904,12 +901,12 @@ class FailureManager extends EventEmitter {
         `[FailureManager] Grace period entered: ${userId} (${this.GRACE_PERIOD_SECONDS}s)`
       );
       
-      // Items 7/8: do NOT pause/hold a disconnected human's turn and do NOT
-      // bot-convert. The turn timer keeps running; when it expires on their seat
-      // the turn is skipped and an "inactive turn" is accrued
-      // (SocketHandlers._onTurnTimerExpired). At MAX consecutive inactives the
-      // game ends with the active player as winner (inactivity_forfeit).
-      // Reconnecting before that resumes normal play.
+      // Do NOT pause/hold a disconnected human's turn and do NOT bot-convert.
+      // The turn timer keeps running; when it expires on their seat the turn is
+      // AUTO-PLAYED — take a card, throw a card (SocketHandlers._onTurnTimerExpired)
+      // — every time it comes around, for as long as they stay away. Absence
+      // never ends the match (product rule 2026-09-28); reconnecting at any turn
+      // hands the seat straight back.
 
       // Schedule grace period expiry
       this._scheduleGracePeriodExpiry(room, player, graceKey);
@@ -956,10 +953,9 @@ class FailureManager extends EventEmitter {
             `[FailureManager] Grace window expired (no reconnect): ${player.playerId} — seat held as disconnected`
           );
           
-          // Items 7/8: NO bot conversion. The disconnected human keeps their
-          // (reconnectable) seat; the game advances by skipping their turns and
-          // accruing inactive turns, ending with the active player as the winner
-          // at MAX consecutive inactives (inactivity_forfeit). We only drop the
+          // NO bot conversion. The disconnected human keeps their (reconnectable)
+          // seat and the turn timer auto-plays their turns (take + throw) until
+          // they return or the game finishes on its own. We only drop the
           // transient grace marker here.
 
           // Cleanup
@@ -983,10 +979,10 @@ class FailureManager extends EventEmitter {
   /**
    * Restart resilience: after a server restart, in-flight grace timers (plain
    * setTimeout) are gone, but a seat can still be persisted as 'grace_period' (or
-   * a disconnected human). Re-arm a grace→bot expiry for each such seat so a
-   * player who never reconnects post-restart is eventually replaced by a bot and
-   * the game is not frozen. Players persisted as 'connected' are left alone (they
-   * reconnect, or the turn-timer's 5-consecutive-inactive forfeit reaps them).
+   * a disconnected human). Re-arm the grace expiry for each such seat so the
+   * bookkeeping of a player who never reconnects post-restart is closed out; the
+   * turn timer auto-plays that seat meanwhile, so the game is never frozen.
+   * Players persisted as 'connected' are left alone unless `allHumanSeats`.
    * Idempotent: a live reconnect (_handleReconnection) clears the timer and flips
    * status; an already-armed graceKey is skipped.
    */
@@ -998,10 +994,10 @@ class FailureManager extends EventEmitter {
       // `allHumanSeats` is the deploy-restart truth: a fresh process holds NO
       // sockets, so a seat persisted as 'connected' is connected to nothing —
       // its socketId is the id of a connection that died with the old process.
-      // Left as-is, the turn-timer expiry would auto-PLAY that "connected" seat
-      // (instead of the offline skip), OccupancyMonitor would count a ghost, and
-      // the next-round deal would pass its "some human is connected" gate on a
-      // lie. Every human seat is therefore treated as mid-grace until its owner
+      // Left as-is, the watchdog would treat that seat as present (the long
+      // timer-Off bound instead of the offline one), OccupancyMonitor would count
+      // a ghost, and the next-round deal would pass its "some human is connected"
+      // gate on a lie. Every human seat is therefore treated as mid-grace until its owner
       // rejoins — which the plain join_room path already handles.
       const midGrace =
         allHumanSeats ||
@@ -1261,7 +1257,6 @@ class FailureManager extends EventEmitter {
       : room.roundNumber || 0;
     room.lastRoundWinnerIndex =
       state.lastRoundWinnerIndex === undefined ? null : state.lastRoundWinnerIndex;
-    room.offlineStrikes = this._mapFromState(state.offlineStrikes);
     room.teamRequiredMeldPoints = this._mapFromState(state.teamRequiredMeldPoints);
     room.teamTurnPenalty = this._mapFromState(state.teamTurnPenalty);
     room.cumulativeScores = this._mapFromState(state.cumulativeScores);

@@ -110,13 +110,6 @@ class GameRoom {
      * playerId; cleared at the start of every turn.
      */
     this.turnMeldedCards = new Map();
-    /**
-     * OFFLINE STRIKES, per player, per ROUND. One strike is charged each time a
-     * player's turn comes around while they are disconnected and the system has
-     * to resolve it without them. Coming back online does NOT clear them; a new
-     * deal does. At MAX_OFFLINE_STRIKES the match ends.
-     */
-    this.offlineStrikes = new Map();
     this.teamMeldPointsThisTurn = new Map(); // teamId -> points this turn
     this.teamRequiredMeldPoints = new Map(); // teamId -> required minimum (professional)
     this.teamTurnPenalty = new Map(); // teamId -> accumulated penalty (professional)
@@ -621,8 +614,6 @@ class GameRoom {
     // as having taken a well: it could close without one and still collect the
     // +100 well bonus. Clear the maps whole, then re-seed per player below.
     this.turnMeldedCards.clear();
-    // Per ROUND: a new deal wipes the slate, but reconnecting mid-round does not.
-    this.offlineStrikes.clear();
     this.playerHasTakenPozzetto.clear();
     this.playerPozzettoTakeMode?.clear();
     this.playerDeadPileCount.clear();

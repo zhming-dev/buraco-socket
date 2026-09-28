@@ -197,7 +197,7 @@ class ActionHandlers {
    * @param {Object|Object[]} card
    * @returns {Object}
    */
-  static handleDiscard(room, playerId, card) {
+  static handleDiscard(room, playerId, card, { auto = false } = {}) {
     const validation = GameValidator.validateDiscard(room, playerId, card);
     if (!validation.isValid) {
       return { success: false, error: validation.error };
@@ -319,7 +319,11 @@ class ActionHandlers {
       timestamp: new Date().toISOString(),
     };
 
-    player.markActive();
+    // A discard the SERVER made for the seat (turn-timeout auto-play) is no sign
+    // of life. markActive() would flip a disconnected owner to "connected": the
+    // timer-Off watchdog would stop using the short offline bound, and the
+    // all-humans-gone sweep would never reap a table nobody is playing.
+    if (!auto) player.markActive();
 
     return {
       success: true,

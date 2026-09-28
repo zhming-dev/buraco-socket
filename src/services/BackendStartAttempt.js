@@ -18,7 +18,7 @@ const waitingStateFields = [
   'deck', 'pozzetto', 'deadPiles', 'discardPile', 'discardHistory',
   'playerHands', 'playerMelds', 'playerMeldOrders', 'playerHasTakenPozzetto',
   'playerPozzettoTakeMode', 'playerDeadPileCount', 'meldDirtyFlags',
-  'turnMeldedCards', 'offlineStrikes', 'discardLocks', 'pileTakeHistory',
+  'turnMeldedCards', 'discardLocks', 'pileTakeHistory',
   'teamMeldPointsThisTurn', 'teamRequiredMeldPoints', 'teamTurnPenalty',
   'consecutiveInactiveTurns', 'cumulativeScores', 'cumulativeTeamScores',
 ];
