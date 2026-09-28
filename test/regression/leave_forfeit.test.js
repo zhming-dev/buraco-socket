@@ -148,21 +148,21 @@ describe('Leave-as-forfeit (in-progress)', () => {
     // because someone is slow punished the wrong thing: the counter reset on any
     // action, so a player could drop out, come back for one move, drop out again
     // and never accrue — while a present-but-thinking player got timed out of the
-    // match. What ends a match now is being ABSENT (see the offline strikes
-    // below). An idle player's turn is still auto-played, so the round keeps
-    // moving and finishes on its own.
+    // match. Being absent does not end it either (2026-09-28, see below): an
+    // idle player's turn is auto-played, so the round keeps moving and finishes
+    // on its own.
     const ended = emitted.find((e) => e.event === 'game_ended');
     expect(ended, 'no forfeit for a connected player').to.equal(undefined);
-    expect(room.offlineStrikes.get('opp') || 0, 'and no strike charged').to.equal(0);
   });
 
-  it('a DISCONNECTED player accrues offline strikes, is force-skipped, and forfeits at the cap', () => {
+  it('a DISCONNECTED player is auto-played (take + throw), never bot-converted, never forfeited', () => {
     const service = new GameService();
     services.push(service);
     const room = startedRoom(service, 'r-dc');
 
-    // Opponent (index 1) drops their connection mid-game. Item 8: NO bot
-    // takeover — their turns are skipped + accrue inactive turns until forfeit.
+    // Opponent (index 1) drops their connection mid-game. NO bot takeover, and
+    // (product rule 2026-09-28) no skip and no forfeit either: every expiry of
+    // their turn takes a card and throws a card for them.
     const opp = room.getPlayer('opp');
     opp.disconnect();
     expect(opp.isConnected).to.equal(false);
@@ -175,6 +175,7 @@ describe('Leave-as-forfeit (in-progress)', () => {
     const handlers = new SocketHandlers(io, service);
 
     const handBefore = (room.playerHands.get('opp') || []).length;
+    const pileBefore = room.discardPile.length;
 
     for (let i = 0; i < 5; i++) {
       room.currentTurn = 1; // the disconnected opponent's turn
@@ -187,17 +188,19 @@ describe('Leave-as-forfeit (in-progress)', () => {
       }
     }
 
-    // The absent player's hand was never auto-played (skip = penalty, not help).
+    // Five turns, five takes and five throws: the hand size is unchanged and
+    // the pile grew by one card per turn.
     expect((room.playerHands.get('opp') || []).length).to.equal(handBefore);
-    // Seat was never bot-converted.
+    expect(room.discardPile.length).to.equal(pileBefore + 5);
+    const thrown = emitted.filter((e) => e.event === 'card_discarded' && e.payload.playerIndex === 1);
+    expect(thrown).to.have.length(5);
+    expect(emitted.some((e) => e.event === 'turn_changed' && e.payload.forced), 'never a bare skip').to.equal(false);
+    // Seat was never bot-converted, and is still offline.
     expect(room.getPlayer('opp').isBot).to.equal(false);
+    expect(room.getPlayer('opp').isConnected).to.equal(false);
 
-    const ended = emitted.find((e) => e.event === 'game_ended');
-    expect(ended, 'game_ended emitted').to.exist;
-    expect(ended.payload.reason).to.equal('offline_forfeit');
-    expect(ended.payload.offlineStrikes).to.equal(SocketHandlers.MAX_OFFLINE_STRIKES);
-    // The connected player (index 0) wins.
-    expect(ended.payload.winnerIndex).to.equal(0);
+    expect(emitted.find((e) => e.event === 'game_ended'), 'absence never ends the match').to.equal(undefined);
+    expect(room.isInProgress()).to.equal(true);
   });
 
   it("2v2 forfeit: the abandoner's team loses — winner comes from the OPPOSING team", () => {

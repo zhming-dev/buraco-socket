@@ -46,15 +46,6 @@ class SocketHandlers {
     return 5;
   }
 
-  /**
-   * Offline strikes a player may collect in a ROUND before the match is called.
-   * One strike per turn that comes around while they are disconnected and the
-   * system resolves it without them.
-   */
-  static get MAX_OFFLINE_STRIKES() {
-    return 4;
-  }
-
   // R1 anti-freeze watchdog for an "Off" (unlimited) turn timer. "Off" hides the
   // countdown, but the turn must still be GUARANTEED to advance so an
   // un-completable turn or an unresponsive seat can never freeze the whole table
@@ -5202,49 +5193,6 @@ class SocketHandlers {
   }
 
   /**
-   * Charge an OFFLINE STRIKE when a turn comes around and its owner is not
-   * there. Replaces the old "5 consecutive turns without a manual action"
-   * forfeit, which counted IDLENESS and reset the moment the player did
-   * anything — so someone could drop out, come back for one move, drop out
-   * again, and never accrue.
-   *
-   * Now: the strike is charged for being ABSENT while the system resolves your
-   * turn, coming back online does NOT clear it, and the count is per ROUND.
-   * A connected player who simply idles no longer ends the match — their turn is
-   * still auto-played, so the round keeps moving and finishes on its own.
-   *
-   * @returns {boolean} true when the match was ended here
-   */
-  _handleInactiveTurnExpiry(room, player) {
-    if (!room || !player) return false;
-    if (!room.offlineStrikes) room.offlineStrikes = new Map();
-
-    // Present and playing: nothing to charge.
-    if (player.isConnected !== false) return false;
-    // A BOT seat is never "absent", even when it carries the disconnected flag of
-    // the human it took over from. Charging it would forfeit a match that is
-    // being played perfectly well on its behalf.
-    if (player.isBot === true || player.status === 'bot') return false;
-
-    const strikes = (room.offlineStrikes.get(player.playerId) || 0) + 1;
-    room.offlineStrikes.set(player.playerId, strikes);
-
-    logger.warn(
-      `[TURN_TIMER] Player ${player.playerId} offline strike ${strikes}/${SocketHandlers.MAX_OFFLINE_STRIKES} ` +
-        `in room ${room.roomId}`
-    );
-
-    if (strikes < SocketHandlers.MAX_OFFLINE_STRIKES) return false;
-
-    this._handlePlayerForfeit(null, room, player.playerId, player, {
-      reason: 'offline_forfeit',
-      inactiveTurns: strikes,
-      offlineStrikes: strikes,
-    });
-    return true;
-  }
-
-  /**
    * Handle leave room event
    * @param {Socket} socket
    */
@@ -5451,11 +5399,6 @@ class SocketHandlers {
       roundNumber: room.roundNumber,
       forfeitedBy: leavingPlayer ? leavingPlayer.playerIndex : null,
       forfeitedByName: leavingPlayer ? leavingPlayer.playerName : null,
-      inactiveTurns: options.inactiveTurns,
-      // How many turns came around while this player was absent. Named
-      // separately from inactiveTurns so a client can say "left the table for 4
-      // turns" rather than "was slow".
-      offlineStrikes: options.offlineStrikes,
       timestamp: new Date().toISOString(),
     };
     // Persist as the terminal round-end payload so any reader (reconnect
@@ -8422,9 +8365,9 @@ class SocketHandlers {
 
       // Items 7/8: host is IMMUTABLE — an in-game host disconnect does NOT
       // migrate the host. It is treated like any other disconnect: the seat
-      // enters grace (reconnectable) and, if the host does not return, accrues
-      // inactive turns until the game ends with the active player as winner
-      // (inactivity_forfeit). No HOST_CHANGED is emitted.
+      // enters grace (reconnectable) and, if the host does not return, the turn
+      // timer auto-plays it (take + throw) until they do or the game finishes.
+      // No HOST_CHANGED is emitted.
       const result = ActionHandlers.handleDisconnect(room, playerId);
       // #11 multi-round: route an intermission drop into the normal in-game
       // reconnect grace too, so the seat is HELD for round N+1 instead of taking
@@ -9178,7 +9121,7 @@ class SocketHandlers {
    * ever receive on a game_ended is
    *   from here .............. scheduler_error | seat_missing | no_humans |
    *                            start_failed | deal_failed
-   *   from _handlePlayerForfeit  host_left | opponent_left | inactivity_forfeit
+   *   from _handlePlayerForfeit  host_left | opponent_left
    * and a clean round/match end carries NO reason key at all (ActionHandlers
    * ._finalizeWith builds its payload from scratch and never writes one). Renaming
    * any code here silently changes what players read, so treat the list as a wire
@@ -10313,9 +10256,11 @@ class SocketHandlers {
     if (!currentPlayer) return;
 
     const playerId = currentPlayer.playerId;
+    const offline = currentPlayer.isBot !== true && currentPlayer.isConnected === false;
 
     logger.info(
-      `[TURN_TIMER] Timer expired for player ${playerId} (index: ${room.currentTurn}) in room ${room.roomId}`
+      `[TURN_TIMER] Timer expired for player ${playerId} (index: ${room.currentTurn}) in room ${room.roomId}` +
+        (offline ? ' — seat is offline, auto-playing it' : '')
     );
     this._gameEvent(room, 'timeout', {
       playerId,
@@ -10329,20 +10274,16 @@ class SocketHandlers {
       timestamp: new Date().toISOString(),
     });
 
-    if (this._handleInactiveTurnExpiry(room, currentPlayer)) {
-      return;
-    }
-
-    // Items 7/8: a DISCONNECTED human's turn is skipped as a penalty — never
-    // auto-played for them (auto-play would help the absent player). The inactive
-    // counter above climbs each time their turn comes around; at MAX the game
-    // ends with the active player as winner (inactivity_forfeit). Force-advance
-    // so play keeps moving meanwhile. Connected idle humans / bots fall through
-    // to the normal auto-draw + auto-discard below.
-    if (!currentPlayer.isBot && currentPlayer.isConnected === false) {
-      if (room.isInProgress()) this._forceAdvanceTurn(room);
-      return;
-    }
+    // AUTO-PLAY every seat whose clock ran out — present but idle, disconnected,
+    // or app killed alike: take a card, throw a card, the turn passes. Absence
+    // never ends a match (product rule 2026-09-28). The old rule ("Items 7/8")
+    // skipped an offline seat's turn outright — the table watched the turn move
+    // with no take and no throw — and called the match at the 4th skip of a round
+    // (offline_forfeit). Now the seat plays on autopilot until the game finishes
+    // on its own, and its owner can walk back in at any turn. A table with NO
+    // human connected at all is still reaped by GameService's all-humans-gone
+    // sweep: take-and-throw never melds, so that match could never reach its
+    // target score.
 
     // A card auto-drawn from the deck THIS expiry (null if the player had already
     // drawn). The timeout prefers throwing it back — the player never chose to
@@ -10394,6 +10335,19 @@ class SocketHandlers {
           });
           this._emitTimeoutDraw(room, currentPlayer, drawnCard);
         }
+      }
+    }
+
+    // Step 1b: an EMPTY hand — direct well mode, the whole hand was melded and the
+    // well is still waiting to be picked up. Take the well, as the player was
+    // about to, and throw from it below. Without this the "no legal discard" path
+    // took back every meld the player had just laid (the confiscation rule is for
+    // a hand stranded on one card it may not throw, not for a finished hand).
+    // Mirrors the bot engine's BotCoordinator._forceTurnProgress.
+    if ((room.playerHands.get(playerId) || []).length === 0) {
+      const well = this._applyPozzettoTake(room, playerId, currentPlayer, { auto: true });
+      if (!well.ok) {
+        logger.warn(`[TURN_TIMER] Empty hand for ${playerId} and no well to take: ${well.error}`);
       }
     }
 
@@ -10452,7 +10406,11 @@ class SocketHandlers {
       }
     }
 
-    let cardToDiscard = null;
+    // The throw, in preference order. The first entry is the card the rules pick;
+    // the rest are fallbacks, so a single refusal can never leave the turn
+    // without its throw. Every entry already passed validateDiscard, and
+    // handleDiscard refuses before it mutates anything, so retrying is safe.
+    let candidates = [];
     if (meldsReturned > 0) {
       // Confiscation path: the card thrown is picked AT RANDOM among the legal
       // ones, per the product rule. Deliberately NOT the least-damage pick the
@@ -10460,21 +10418,30 @@ class SocketHandlers {
       // end and then let the clock run out is not owed the kindest card. Legality
       // is still absolute: an illegal or closing discard would corrupt scoring.
       if (legal.length > 0) {
-        cardToDiscard = legal[Math.floor(Math.random() * legal.length)];
+        const pick = legal[Math.floor(Math.random() * legal.length)];
+        candidates = [pick, ...legal.filter((c) => c !== pick)];
       }
     } else {
-      const nonWild = legal.filter((c) => !isWild(c));
-      const pool = nonWild.length > 0 ? nonWild : legal;
-      if (pool.length > 0) {
-        cardToDiscard = (autoDrawnCard && pool.includes(autoDrawnCard))
-          ? autoDrawnCard
-          : pool.slice().sort((a, b) => discardValue(a) - discardValue(b))[0];
+      const byValue = (cards) => cards.slice().sort((a, b) => discardValue(a) - discardValue(b));
+      const nonWild = byValue(legal.filter((c) => !isWild(c)));
+      const wild = byValue(legal.filter(isWild));
+      const pool = nonWild.length > 0 ? nonWild : wild;
+      const first = autoDrawnCard && pool.includes(autoDrawnCard) ? autoDrawnCard : pool[0];
+      if (first) {
+        candidates = [first, ...nonWild.filter((c) => c !== first), ...wild.filter((c) => c !== first)];
       }
     }
 
     let advanced = false;
-    if (cardToDiscard) {
-      const result = ActionHandlers.handleDiscard(room, playerId, cardToDiscard);
+    let result = null;
+    for (const candidate of candidates) {
+      result = ActionHandlers.handleDiscard(room, playerId, candidate, { auto: true });
+      if (result.success) break;
+      logger.warn(
+        `[TURN_TIMER] Auto-discard of ${JSON.stringify(this._briefCard(candidate))} refused for ${playerId}: ${result.error}`
+      );
+    }
+    if (result) {
       if (result.success) {
         this._gameEvent(room, 'discard', {
           playerId,
@@ -10519,15 +10486,21 @@ class SocketHandlers {
           advanced = true;
         }
         this._sendGameStateUpdate(room);
-      } else {
-        logger.warn(`[TURN_TIMER] Auto-discard failed for ${playerId}: ${result.error}`);
       }
     }
 
     // Safety net: the turn timer was already stopped above. If no legal discard
     // advanced the turn, the game would FREEZE (no turn change, no new timer).
-    // Force the turn forward so play always continues (bug #6 / S-H9).
+    // Force the turn forward so play always continues (bug #6 / S-H9). With the
+    // well take and the fallback throws above this should be unreachable — it
+    // is the one way a timeout still passes the turn WITHOUT a throw, so say so
+    // loudly when it happens.
     if (!advanced && room.isInProgress()) {
+      logger.error(
+        `[TURN_TIMER] Auto-play found no legal throw for ${playerId} (hand ${
+          (room.playerHands.get(playerId) || []).length
+        }, drawn ${room.hasDrawnCard}) in room ${room.roomId} — force-advancing`
+      );
       this._forceAdvanceTurn(room);
     }
   }
@@ -10928,19 +10901,38 @@ class SocketHandlers {
       `[TAKE_POZZETTO] Player ${playerId} (index: ${player?.playerIndex}) requesting pozzetto in room ${room.roomId}`
     );
 
+    const take = this._applyPozzettoTake(room, playerId, player);
+    if (!take.ok) {
+      socket.emit(SocketEvents.ERROR, ErrorHandler.createErrorResponse(take.error));
+      return;
+    }
+
+    // Taking the pot refills the hand and the SAME player keeps the turn (they
+    // must still discard). Re-arm a fresh turn timer so the pre-existing timer
+    // can't force-skip them with a full new hand. Emits TURN_TIMER_STARTED,
+    // which the client mirrors via applyServerTurnTimer.
+    this._startTurnTimer(room);
+  }
+
+  /**
+   * Hand the side's next well to `playerId`, whose hand is empty (direct well
+   * mode), and tell the table. Shared by the player's own take_pozzetto and the
+   * turn-timeout auto-play, which takes the well for a seat that emptied its hand
+   * and then ran out of time. Does NOT touch the turn timer — the caller decides.
+   * @returns {{ok: true, cards: Object[]} | {ok: false, error: string}}
+   */
+  _applyPozzettoTake(room, playerId, player, { auto = false } = {}) {
     // Validation: turn, availability, already taken, and empty hand before taking
     const validation = GameValidator.validateTakePozzetto(room, playerId);
     if (!validation.isValid) {
       logger.warn(`[TAKE_POZZETTO] Rejected for player ${playerId}: ${validation.error}`);
-      socket.emit(SocketEvents.ERROR, ErrorHandler.createErrorResponse(validation.error));
-      return;
+      return { ok: false, error: validation.error };
     }
 
     const playerHand = room.playerHands.get(playerId) || [];
     const nextPile = room.deadPiles?.find((pile) => pile.length > 0) || room.pozzetto;
     if (!nextPile || nextPile.length === 0) {
-      socket.emit(SocketEvents.ERROR, ErrorHandler.createErrorResponse('Pozzetto not available'));
-      return;
+      return { ok: false, error: 'Pozzetto not available' };
     }
 
     const pozzettoCards = [...nextPile];
@@ -10962,6 +10954,7 @@ class SocketHandlers {
       seat: player?.playerIndex,
       cards: this._briefCards(pozzettoCards),
       hand: playerHand.length,
+      ...(auto ? { auto: true } : {}),
     });
 
     // Emit to all players
@@ -10975,12 +10968,7 @@ class SocketHandlers {
     // Send a full authoritative state update. The Flutter parser expects a
     // complete GAME_STATE_UPDATE payload, not a partial hand-only patch.
     this._sendGameStateUpdate(room);
-
-    // Taking the pot refills the hand and the SAME player keeps the turn (they
-    // must still discard). Re-arm a fresh turn timer so the pre-existing timer
-    // can't force-skip them with a full new hand. Emits TURN_TIMER_STARTED,
-    // which the client mirrors via applyServerTurnTimer.
-    this._startTurnTimer(room);
+    return { ok: true, cards: pozzettoCards };
   }
 
   /**

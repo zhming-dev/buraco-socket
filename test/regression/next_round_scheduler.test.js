@@ -999,23 +999,25 @@ describe('#11 multi-round — server-driven next round', () => {
       expect(room.nextRoundHandle).to.equal(null);
     });
 
-    it('running out the OFFLINE strike budget is offline_forfeit', () => {
+    it('an OFFLINE seat running out of time is auto-played — no game_ended, no code at all', () => {
+      // The offline strikes (and their offline_forfeit code) are gone: absence
+      // never ends a match (product rule 2026-09-28).
       const service = newService();
       const handlers = new SocketHandlers(io, service);
       const room = liveRoom(service);
-      const max = SocketHandlers.MAX_OFFLINE_STRIKES;
       const absent = room.getPlayer(OPP);
       absent.disconnect();
-      room.offlineStrikes = new Map([[OPP, max - 1]]);
       emitted.length = 0;
 
-      const forfeited = handlers._handleInactiveTurnExpiry(room, absent);
+      for (let i = 0; i < 6; i += 1) {
+        room.currentTurn = absent.playerIndex;
+        room.hasDrawnCard = false;
+        handlers._onTurnTimerExpired(room);
+        handlers._stopTurnTimer(room);
+      }
 
-      expect(forfeited).to.equal(true);
-      const ended = gameEnded().find((e) => e.scope === 'room');
-      expect(ended.payload.reason).to.equal('offline_forfeit');
-      expect(ended.payload.offlineStrikes).to.equal(max);
-      expect(ended.payload.matchEnded).to.equal(true);
+      expect(gameEnded()).to.have.length(0);
+      expect(room.isInProgress()).to.equal(true);
     });
 
     it('only the two LEAVE codes contain the word "left"', () => {
@@ -1025,8 +1027,6 @@ describe('#11 multi-round — server-driven next round', () => {
       // match. Codes are enumerated on _abortNextRound.
       const leaveCodes = ['host_left', 'opponent_left'];
       const otherCodes = [
-        'inactivity_forfeit',
-        'offline_forfeit',
         'scheduler_error',
         'seat_missing',
         'no_humans',
