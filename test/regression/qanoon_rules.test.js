@@ -117,6 +117,28 @@ describe('#qanoon', () => {
       expect(GameValidator.validateGoingDown(room, 'p1', [buraco, set]).isValid).to.equal(true);
     });
 
+    it('a set that is itself a buraco (7 cards, a 2 inside) is allowed while locked', () => {
+      const room = makeRoom();
+      const set = [
+        c('K', 'diamonds'), c('K', 'spades'), c('K', 'clubs'), c('K', 'hearts'),
+        c('K', 'diamonds'), c('2', 'diamonds'), c('K', 'clubs'),
+      ];
+      room.playerHands.set('p1', [...set, c('9', 'clubs'), c('A', 'hearts')]);
+      const res = GameValidator.validateMeld(room, 'p1', set);
+      expect(res.isValid, res.error).to.equal(true);
+      expect(GameValidator.validateGoingDown(room, 'p1', [set]).isValid).to.equal(true);
+    });
+
+    it('a 6-card set is still locked', () => {
+      const room = makeRoom();
+      const set = [
+        c('K', 'diamonds'), c('K', 'spades'), c('K', 'clubs'),
+        c('K', 'hearts'), c('K', 'diamonds'), c('K', 'clubs'),
+      ];
+      room.playerHands.set('p1', [...set, c('9', 'clubs'), c('A', 'hearts')]);
+      expect(GameValidator.validateMeld(room, 'p1', set).reason).to.equal('qanoonSetLocked');
+    });
+
     it('a going-down with a short run + a set is refused', () => {
       const room = makeRoom();
       const short = run('spades', ['4', '5', '6']);
