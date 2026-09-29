@@ -12,7 +12,7 @@ const MAX_MELD_CARDS = 30;
 // unlocks SETS for its side. Same bar as ActionHandlers._teamHasAnyBrazilia.
 const BURACO_SIZE = 7;
 const QANOON_SET_LOCKED_ERROR =
-  'Qanoon: sets of the same rank are locked until your side has a buraco';
+  'Qanoon: sets of the same rank are locked until your side has a buraco (a 7-card set is allowed)';
 
 class GameValidator {
   /**
@@ -117,7 +117,8 @@ class GameValidator {
     if (!this._isValidSequence(resolved, ruleset) && !this._isValidSet(resolved, ruleset)) {
       return { isValid: false, error: 'Invalid meld: not a valid sequence or set' };
     }
-    if (this._isSetOnly(resolved, ruleset) && this._qanoonSetLocked(room, playerId)) {
+    // A set that is itself a buraco (7+ cards) unlocks itself.
+    if (this._isSetOnly(resolved, ruleset) && this._qanoonSetLocked(room, playerId, [resolved])) {
       return { isValid: false, error: QANOON_SET_LOCKED_ERROR, reason: 'qanoonSetLocked' };
     }
 
@@ -128,7 +129,8 @@ class GameValidator {
    * QANOON rule 1 — a SET (same-rank meld, the 2-2-2 set included) may not be
    * laid while the actor's side owns no buraco. `alsoLaying` are the other
    * melds going down in the SAME action: a going-down that lays a 7-card run
-   * next to a set is one legal move, the run unlocks the set it travels with.
+   * next to a set is one legal move, the run unlocks the set it travels with,
+   * and a set that is ITSELF a buraco (7+ cards, clean or dirty) unlocks itself.
    * Only NEW melds are gated. Extending an existing set needs no check: none can
    * exist on a locked side.
    * @param {GameRoom} room
