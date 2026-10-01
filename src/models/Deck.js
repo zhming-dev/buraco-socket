@@ -3,6 +3,8 @@
  * Represents a deck of cards for Brazilia game
  */
 
+const crypto = require('crypto');
+
 class Card {
   constructor(suit, rank, cardId = null) {
     this.suit = suit; // 'hearts', 'diamonds', 'clubs', 'spades'
@@ -100,11 +102,16 @@ class Deck {
   }
 
   /**
-   * Shuffle the deck using Fisher-Yates algorithm
+   * Shuffle the deck using Fisher-Yates algorithm.
+   *
+   * crypto.randomInt, not Math.random: Math.random's output also reaches
+   * clients (room ids, bot ids), and its state can in principle be recovered
+   * from enough of it, which would make the next shuffle predictable. The
+   * 2026-10-01 fairness audit (17M+ deals) found the deal unbiased either way.
    */
   shuffle() {
     for (let i = this.cards.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = crypto.randomInt(i + 1);
       [this.cards[i], this.cards[j]] = [this.cards[j], this.cards[i]];
     }
   }

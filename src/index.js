@@ -698,7 +698,7 @@ class BraziliaServer {
             try {
               const secret = req.headers['x-webhook-secret'];
               if (
-                this.config.security.webhookSecret &&
+                !this.config.security.webhookSecret ||
                 secret !== this.config.security.webhookSecret
               ) {
                 logger.warn('[WEBHOOK] Unauthorized dev-restart webhook', {
@@ -796,7 +796,7 @@ class BraziliaServer {
         if (req.method === 'POST' && req.url.startsWith('/webhooks/dev-close-room')) {
           (async () => {
             try {
-              if (this.config.security.webhookSecret && req.headers['x-webhook-secret'] !== this.config.security.webhookSecret) {
+              if (!this.config.security.webhookSecret || req.headers['x-webhook-secret'] !== this.config.security.webhookSecret) {
                 logger.warn('[WEBHOOK] Unauthorized dev-close-room webhook', {
                   source: 'webhook',
                   event: 'dev_close_room',
@@ -828,7 +828,7 @@ class BraziliaServer {
         if (req.method === 'POST' && req.url.startsWith('/webhooks/dev-swap-cards')) {
           (async () => {
             try {
-              if (this.config.security.webhookSecret && req.headers['x-webhook-secret'] !== this.config.security.webhookSecret) {
+              if (!this.config.security.webhookSecret || req.headers['x-webhook-secret'] !== this.config.security.webhookSecret) {
                 sendJson(res, 401, { success: false, error: 'Unauthorized' });
                 return;
               }
@@ -852,7 +852,7 @@ class BraziliaServer {
             try {
               const secret = req.headers['x-webhook-secret'];
               if (
-                this.config.security.webhookSecret &&
+                !this.config.security.webhookSecret ||
                 secret !== this.config.security.webhookSecret
               ) {
                 logger.warn('[WEBHOOK] Unauthorized dev-change-cards webhook', {

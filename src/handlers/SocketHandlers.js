@@ -5162,7 +5162,7 @@ class SocketHandlers {
    * @param {object} data changePlayerCards() body + { secret }
    */
   handleDevChangeCards(socket, data) {
-    if (config.security.webhookSecret && data?.secret !== config.security.webhookSecret) {
+    if (!config.security.webhookSecret || data?.secret !== config.security.webhookSecret) {
       logger.warn('[DEV_CHANGE_CARDS] rejected: bad or missing secret', {
         socketId: socket.id,
         roomId: data?.roomId ? String(data.roomId) : null,
