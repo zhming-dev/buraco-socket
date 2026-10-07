@@ -215,6 +215,9 @@ class FailureManager extends EventEmitter {
           room.lastRoundWinnerIndex === undefined ? null : room.lastRoundWinnerIndex,
         teamRequiredMeldPoints: this._serializeMap(room.teamRequiredMeldPoints),
         teamTurnPenalty: this._serializeMap(room.teamTurnPenalty),
+        // QANOON escalation is match-long: a restart must not hand a repeat
+        // offender a fresh 100.
+        qanoonChargeCounts: this._serializeMap(room.qanoonChargeCounts),
         cumulativeScores: this._serializeMap(room.cumulativeScores),
         cumulativeTeamScores: this._serializeMap(room.cumulativeTeamScores),
         lastRoundScores: room.lastRoundScores || {},
@@ -1259,6 +1262,7 @@ class FailureManager extends EventEmitter {
       state.lastRoundWinnerIndex === undefined ? null : state.lastRoundWinnerIndex;
     room.teamRequiredMeldPoints = this._mapFromState(state.teamRequiredMeldPoints);
     room.teamTurnPenalty = this._mapFromState(state.teamTurnPenalty);
+    room.qanoonChargeCounts = this._mapFromState(state.qanoonChargeCounts);
     room.cumulativeScores = this._mapFromState(state.cumulativeScores);
     room.cumulativeTeamScores = this._mapFromState(state.cumulativeTeamScores);
 

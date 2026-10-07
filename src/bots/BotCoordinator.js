@@ -627,6 +627,24 @@ class BotCoordinator {
    * @param {import('../models/GameRoom')} room
    * @param {import('../models/PlayerSession')} player
    */
+  /**
+   * The snapshot BotStrategy reads, for ANY seat and with no coordinator
+   * running: the turn timeout borrows the bots' card judgement to choose what an
+   * idle player throws (SocketHandlers._timeoutDiscardOrder). The builder and
+   * its helpers read nothing but the room, so a bare prototype instance is all
+   * they need.
+   * @param {GameRoom} room
+   * @param {PlayerSession} player
+   * @returns {Object}
+   */
+  static seatState(room, player) {
+    return BotCoordinator.prototype._buildBotState.call(
+      Object.create(BotCoordinator.prototype),
+      room,
+      player
+    );
+  }
+
   _buildBotState(room, player) {
     const hand = room.playerHands.get(player.playerId) || [];
     const ruleset = room.ruleset || 'classic';

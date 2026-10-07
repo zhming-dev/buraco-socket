@@ -147,10 +147,18 @@ class GameRoom {
      * server alone enforces the two extra rules:
      *   1. no SET (same-rank meld) until the side owns a buraco;
      *   2. a discard-pile take must put at least one taken card into a meld
-     *      before the discard, or the side is charged QANOON_PILE_CHARGE.
+     *      before the discard, or the side is charged — 100 the first time,
+     *      200 the second, and so on (ActionHandlers.qanoonPileChargeFor).
      * Read it through isQanoon(), which also enforces the 1v1 half.
      */
     this.qanoon = false;
+    /**
+     * QANOON rule-2 charges booked so far, playerId -> count. MATCH-scoped on
+     * purpose: one room is one match, and the round reset leaves it alone, so
+     * the charge keeps growing across rounds (owner, 2026-10-07: "always
+     * increase"). Persisted with the room (FailureManager).
+     */
+    this.qanoonChargeCounts = new Map();
 
     // New PRO room settings (set from sync-room; see SocketHandlers.syncRoomFromBackend).
     /**
