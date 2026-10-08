@@ -941,6 +941,15 @@
     });
   }
 
+  // A table being played: in the lobby, mid-round, or between the rounds of a
+  // match. A room whose match is over (finished / abandoned) stays in memory
+  // until cleanup; that is history, listed under Replays / Logs, never under
+  // Live rooms.
+  function isLiveRoom(r) {
+    return !!r && (r.inProgress === true || r.awaitingNextRound === true || r.status === 'waiting');
+  }
+  var liveRoomIds = null; // roomId -> true from the last roster; null until the first poll
+
   function statusBadge(r) {
     var s = String(r.status || '');
     var cls = r.inProgress ? 'live' : (s === 'waiting' ? 'waiting' : 'ended');
@@ -959,7 +968,9 @@
   // every 2s replaced the item under the cursor, so clicks landed on nothing).
   function renderRooms(body) {
     var list = $('rooms-list');
-    var rooms = (body && body.rooms) || [];
+    var rooms = ((body && body.rooms) || []).filter(isLiveRoom);
+    liveRoomIds = {};
+    rooms.forEach(function (r) { liveRoomIds[r.roomId] = true; });
     if (!rooms.length) {
       list.innerHTML = '<div class="empty">no live games</div>';
       return;
@@ -979,9 +990,12 @@
         item.appendChild(el('div', 'r2'));
         item.appendChild(el('div', 'r3'));
         item.onclick = function () {
-          selectRoom(item.dataset.roomId);
+          var id = item.dataset.roomId;
+          selectRoom(id);
+          // In Logs a game opens on its story; in Live rooms on its table.
+          if (section === 'logs') { gameLogs.open(id); showTab('logs'); return; }
           showTab('detail');
-          gameLogs.open(item.dataset.roomId, { quiet: true });
+          gameLogs.open(id, { quiet: true });
         };
         list.appendChild(item);
       }
@@ -1004,7 +1018,11 @@
   // Finished games whose story is still kept (from /dev/api/logs).
   function renderEnded(rows) {
     var list = $('ended-list');
-    var ended = (rows || []).filter(function (r) { return !r.live; }).slice(0, 12);
+    // `live` there only means "still in memory": a room whose match is over
+    // waits for cleanup, and until then it is finished, not a live table.
+    var ended = (rows || []).filter(function (r) {
+      return !r.live || (liveRoomIds !== null && !liveRoomIds[r.roomId]);
+    }).slice(0, 12);
     if (!ended.length) { list.innerHTML = '<div class="empty">—</div>'; return; }
     if (list.querySelector('.empty')) list.innerHTML = '';
     var seen = {};
@@ -1022,10 +1040,12 @@
         item.onclick = function () {
           var id = item.dataset.roomId;
           selectRoom(id, { noLoad: true });
+          if (section === 'logs') { gameLogs.open(id); showTab('logs'); return; }
           gameLogs.open(id, { quiet: true });
           // A finished game with a recorded match opens as a replay on the
           // table; one that never dealt (a lobby) only has its story.
           replay.openLatestForRoom(id).then(function (opened) {
+            if (!opened) toast('No recorded match for this game — showing its story');
             showTab(opened ? 'detail' : 'logs');
           });
         };
@@ -1070,14 +1090,15 @@
 
   // ---- workspace tabs -----------------------------------------------------------
 
-  // fromSection: the nav asked for this tab (else a click here moves the nav).
-  function showTab(name, fromSection) {
+  // A tab only switches the workspace pane. It used to move the nav as well
+  // (Story -> Logs, Table -> Live rooms / Replays), and each section now lists
+  // its own games, so a tab click swapped the sidebar list under the cursor.
+  function showTab(name) {
     $('tab-detail').classList.toggle('active', name === 'detail');
     $('tab-logs').classList.toggle('active', name === 'logs');
     $('pane-detail').classList.toggle('active', name === 'detail');
     $('pane-logs').classList.toggle('active', name === 'logs');
     if (name === 'logs') gameLogs.onShown();
-    if (!fromSection && inTables()) markSection(name === 'logs' ? 'logs' : (replay.active() ? 'replays' : 'live'));
   }
   $('tab-detail').onclick = function () { showTab('detail'); };
   $('tab-logs').onclick = function () { showTab('logs'); };
@@ -2542,6 +2563,7 @@
 
     function open(matchId, opts) {
       opts = opts || {};
+      var from = section; // where the replay was opened: Exit goes back there
       return api('/dev/api/matches/' + encodeURIComponent(matchId)).then(function (res) {
         // A finished match may come straight off the disk (gzip passthrough):
         // that is the stored {v, header, events} document, with no `success`.
@@ -2550,6 +2572,7 @@
         st = {
           matchId: matchId, header: res.header || {}, events: res.events || [], live: res.live === true,
           index: 0, table: null, cache: {}, timer: null, followTimer: null, loading: false, pending: null,
+          from: from,
         };
         st.rounds = roundsFrom(st.events);
         gameLogs.learnSeats(st.header.seats);
@@ -2558,7 +2581,7 @@
         $('rb-title').title = matchId + (st.header.backendMatchId ? ' · backend match ' + st.header.backendMatchId : '');
         fillRounds();
         $('replaybar').style.display = '';
-        if (inTables()) markSection('replays', matchId);
+        if (inTables()) { markSection('replays', matchId); refreshList(); }
         if (!st.events.length) { toast('This match has no events yet'); return true; }
         var first = st.rounds.length ? st.rounds[0].index : 0;
         go(opts.at === 'end' || st.live ? st.events.length - 1 : first);
@@ -2580,11 +2603,23 @@
       if (!st) return;
       pause();
       if (st.followTimer) clearInterval(st.followTimer);
+      var from = st.from;
       st = null;
       $('replaybar').style.display = 'none';
       $('rb-event').style.display = 'none';
       $('tools').style.display = '';
-      if (!opts.quiet && section === 'replays') markSection('live');
+      if (!opts.quiet && section === 'replays') {
+        // Back where the replay was opened from: the Replay button on a live
+        // table returns to that table under Live rooms; a recorded game leaves
+        // the Replays list in place with nothing picked.
+        if (from === 'live' && selectedRoomId && liveRoomIds && liveRoomIds[selectedRoomId]) {
+          showSection('live');
+        } else {
+          selectRoom(null);
+          setText($('detail-empty'), 'Pick a recorded game');
+        }
+        return;
+      }
       if (opts.keepRoom) return;
       lastDetail = null;
       if (selectedRoomId) {
@@ -2609,12 +2644,16 @@
     }
 
     function refreshList() {
-      if (!secret || !inTables()) return;
+      // The list belongs to the Replays section only: under Live rooms it put
+      // recorded games among the tables being played.
+      if (!secret || section !== 'replays') return;
       var q = listQuery();
       api('/dev/api/matches?' + q.qs).then(function (res) {
         var list = $('replay-list');
-        var rows = res.matches || [];
-        setText($('replays-count'), res.total ? '· ' + res.total + (q.filtered ? ' found' : (res.stats && res.stats.persist ? ' kept on disk' : ' in memory')) : '');
+        // A match still being played is a live table, not a replay: it is under
+        // Live rooms, and the Replay button on its table scrubs it from there.
+        var rows = (res.matches || []).filter(function (m) { return !m.live; });
+        setText($('replays-count'), rows.length ? '· ' + rows.length + (q.filtered ? ' found' : (res.stats && res.stats.persist ? ' kept on disk' : ' in memory')) : '');
         if (!rows.length) { list.innerHTML = '<div class="empty">' + (q.filtered ? 'no match found' : 'no recorded match yet') + '</div>'; return; }
         list.innerHTML = '';
         rows.forEach(function (m) {
@@ -2656,8 +2695,11 @@
     var scrub = null;
     slider.addEventListener('input', function () {
       if (!st) return;
-      pause();
+      // Read the thumb BEFORE pausing: pause() redraws the bar from st.index,
+      // which put the thumb straight back where it was, so the slider could not
+      // be dragged at all.
       var i = Number(slider.value);
+      pause();
       st.index = i; updateBar();
       clearTimeout(scrub);
       scrub = setTimeout(function () { go(i); }, 60);
@@ -2930,15 +2972,31 @@
   function showSection(name) {
     if (!TABLE_SECTIONS[name] && !ADMIN_SECTIONS[name]) name = 'live';
     var wasTables = inTables();
+    var from = section;
     markSection(name);
     var tables = !!TABLE_SECTIONS[name];
     $('tables-view').hidden = !tables;
     $('admin-pages').hidden = tables;
     if (window.BuracoAdmin) window.BuracoAdmin.show(tables ? null : name);
     if (!tables) return;
-    showTab(name === 'logs' ? 'logs' : 'detail', true);
+    if (name !== from) enterTableSection(name);
+    showTab(name === 'logs' ? 'logs' : 'detail');
     if (secret && !wasTables) { poll(); gameLogs.start(); }
     if (secret && name === 'replays') replay.refreshList();
+  }
+
+  // Each table section starts from its own kind of game (owner, 2026-10-08):
+  // Live rooms never keeps a replay or a finished game on the table, Replays
+  // never keeps a live one.
+  function enterTableSection(name) {
+    if (name === 'live') {
+      if (replay.active()) replay.exit({ quiet: true, keepRoom: true });
+      if (selectedRoomId && liveRoomIds && !liveRoomIds[selectedRoomId]) selectRoom(null);
+      else if (selectedRoomId) loadDetail(true);
+    } else if (name === 'replays' && !replay.active()) {
+      if (selectedRoomId) selectRoom(null);
+    }
+    if (!selectedRoomId) setText($('detail-empty'), name === 'replays' ? 'Pick a recorded game' : 'Pick a game');
   }
 
   function openReplay(matchId, roomId) {
@@ -2957,7 +3015,7 @@
   function openRoom(roomId) {
     showSection('live');
     selectRoom(String(roomId));
-    showTab('detail', true);
+    showTab('detail');
     gameLogs.open(String(roomId), { quiet: true });
   }
 

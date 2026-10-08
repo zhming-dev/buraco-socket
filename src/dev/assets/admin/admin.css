@@ -31,14 +31,16 @@ header { border-bottom: 1px solid rgba(42, 51, 66, .6); }
 .side-group + .side-group > .side-h:first-child { margin-top: 18px; }
 .replay-filter { display: none; padding: 0 4px 8px; }
 .replay-filter input { width: 100%; min-width: 0; }
+/* Each table section lists only its own games (owner, 2026-10-08): Live rooms =
+   tables being played now; Replays = recorded matches that ended + finished
+   games; Logs = every game that still has a story. All three lists used to show
+   in every section, which put replays and finished games under Live rooms. */
+body[data-section="live"] #side-replays,
+body[data-section="live"] #side-finished,
+body[data-section="replays"] #side-games,
+body[data-section="logs"] #side-replays { display: none; }
 body[data-section="replays"] .replay-filter { display: block; }
-body[data-section="replays"] #side-replays { order: -1; }
-body[data-section="replays"] #side-replays + .side-group > .side-h:first-child,
-body[data-section="replays"] #side-games > .side-h:first-child { margin-top: 18px; }
 body[data-section="replays"] #side-replays > .side-h:first-child { margin-top: 0; }
-body[data-section="logs"] #side-finished { order: -1; }
-body[data-section="logs"] #side-finished > .side-h:first-child { margin-top: 0; }
-body[data-section="logs"] #side-games > .side-h:first-child { margin-top: 18px; }
 
 /* ---- admin pages ---- */
 .admin-pages { padding: 16px 20px 40px; }
