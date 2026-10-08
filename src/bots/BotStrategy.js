@@ -174,7 +174,8 @@ class BotStrategy {
     // QANOON (1v1 variant on top of pro-direct). Two extra gates:
     //   qanoonSetsLocked  — no NEW set until our side owns a buraco;
     //   qanoonPendingIds  — cards this bot took off the pile this turn; while
-    //                       none of them is in a meld, the discard costs 100.
+    //                       none of them is in a meld, the discard costs a
+    //                       charge (100, then 200, … — it grows each time).
     ctx.qanoon = state.qanoon === true;
     ctx.qanoonSetsLocked = ctx.qanoon && !ctx.hasBrazilia;
     ctx.qanoonPendingIds = [];
@@ -339,7 +340,7 @@ class BotStrategy {
     // that, and let the endRoundOnDeckOut breaker promote the well as before —
     // it stays the last-resort net, it is simply no longer the ordinary path.
     // QANOON: a pile none of whose cards can reach a meld is a certain
-    // 100-point charge. On a dead stock it is still not the only move — the
+    // charge (100 and up — it escalates). On a dead stock it is still not the only move — the
     // decline (draw -> well promotion, or the deck-out end below) is the same
     // exit this branch already uses for a lone card — so it is never worth it.
     const qanoonTakeOk =
@@ -378,7 +379,8 @@ class BotStrategy {
     const ownMelds = ctx.ownMelds;
 
     // QANOON: a take whose cards cannot reach a meld THIS turn is a certain
-    // 100-point charge, so it is never worth it, however rich the pile.
+    // charge (100 and up — it escalates), so it is never worth it, however rich
+    // the pile.
     if (ctx.qanoon && !this._qanoonPileMeldable(state, ctx, pile, hand)) return false;
 
     // Top card extends one of our melds — always worth it, with ONE exception.
@@ -1170,7 +1172,7 @@ class BotStrategy {
    * the hand? Judged on the hand as it will be after the take (hand + pile),
    * through the same _safeToShed the post-take placement is held to: a
    * placement that is legal but unsafe is refused by _qanoonMeldPending, and a
-   * take that leads there is a certain 100-point charge. (A deep-check sim
+   * take that leads there is a certain charge (100 and up). (A deep-check sim
    * found half the stock-alive charges came from exactly that gap.)
    */
   _qanoonPileMeldable(state, ctx, pile, hand) {
@@ -1450,6 +1452,51 @@ class BotStrategy {
   }
 
   /**
+   * The turn timeout's view of [cards] for the seat in [state] — what
+   * SocketHandlers._timeoutDiscardOrder ranks an idle player's throw by:
+   *   - `useful`: the card can still be melded — it extends one of the side's
+   *     melds, or has a same-rank partner or a same-suit neighbour in the hand
+   *     (_cardTies). A wild always is;
+   *   - `feedsOpponent`: it slots straight into an opposing meld;
+   *   - `score`: _discardScore, the bots' own ranking (higher = thrown sooner).
+   * Legality is the caller's job.
+   * @param {Object} state - a BotCoordinator.seatState snapshot
+   * @param {Object[]} cards - the candidates
+   * @returns {{score:number, useful:boolean, feedsOpponent:boolean}[]} one per card, in order
+   */
+  timeoutJudgements(state, cards) {
+    const ctx = this._context(state);
+    const hand = this._cloneCards(state.yourHand || []);
+    return (cards || []).map((card) => {
+      if (this._isWild(card)) return { score: this._discardScore(card, hand, state, ctx), useful: true, feedsOpponent: false };
+      const ties = this._cardTies(card, hand, ctx);
+      return {
+        score: this._discardScore(card, hand, state, ctx),
+        useful: ties.extendsOwn || ties.sameRank > 0 || ties.sameSuitNear > 0,
+        feedsOpponent: ctx.opponentMelds.some((entry) => this._canAddCardsToMeld(entry.cards, [card], ctx)),
+      };
+    });
+  }
+
+  /**
+   * What ties a natural [card] to the side's own game: same-rank partners and
+   * same-suit neighbours (within two ranks) elsewhere in [hand], and whether it
+   * extends one of the side's melds. The base of _discardScore, and the turn
+   * timeout's "can this card still be melded?" test.
+   * @returns {{sameRank:number, sameSuitNear:number, extendsOwn:boolean}}
+   */
+  _cardTies(card, hand, ctx) {
+    const sameRank = hand.filter((c) => !this._sameCard(c, card) && c.rank === card.rank).length;
+    const sameSuitNear = hand.filter((c) => {
+      if (this._sameCard(c, card) || c.suit !== card.suit || this._isWild(c)) return false;
+      const distance = Math.abs(this._rankValue(c.rank, true) - this._rankValue(card.rank, true));
+      return distance > 0 && distance <= 2;
+    }).length;
+    const extendsOwn = ctx.ownMelds.some((entry) => this._canAddCardsToMeld(entry.cards, [card], ctx));
+    return { sameRank, sameSuitNear, extendsOwn };
+  }
+
+  /**
    * Higher score = more willing to throw it away.
    *
    * Base is the card's REAL Brazilia value (an unmelded card counts against us at
@@ -1460,12 +1507,7 @@ class BotStrategy {
     if (!card) return -999;
     if (this._isWild(card)) return -1000; // never volunteer a wild
 
-    const sameRank = hand.filter((c) => !this._sameCard(c, card) && c.rank === card.rank).length;
-    const sameSuitNear = hand.filter((c) => {
-      if (this._sameCard(c, card) || c.suit !== card.suit || this._isWild(c)) return false;
-      const distance = Math.abs(this._rankValue(c.rank, true) - this._rankValue(card.rank, true));
-      return distance > 0 && distance <= 2;
-    }).length;
+    const { sameRank, sameSuitNear, extendsOwn } = this._cardTies(card, hand, ctx);
 
     let score = this._cardPoints(card, ctx);
 
@@ -1474,7 +1516,7 @@ class BotStrategy {
     score -= sameSuitNear * 9;
 
     // Extending one of our own melds is the strongest reason to keep a card.
-    if (ctx.ownMelds.some((entry) => this._canAddCardsToMeld(entry.cards, [card], ctx))) {
+    if (extendsOwn) {
       score -= 60;
     }
 

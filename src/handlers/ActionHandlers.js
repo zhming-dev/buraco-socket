@@ -336,15 +336,19 @@ class ActionHandlers {
    * QANOON rule 2: a seat that took the discard pile this turn must lay at least
    * one of the taken cards before it discards; a discard that ends the turn with
    * every taken card still in hand (the one being thrown aside) charges the seat
-   * QANOON_PILE_CHARGE through the turn-penalty ledger — the same ledger the
-   * round score, the voided-round total and the HUD already read, so no scoring
-   * path needs to know Qanoon exists. The discard itself stays legal: the rule
-   * is a penalty, not a block. Runs on every discard path (manual and the turn
-   * timeout's auto-discard both go through handleDiscard).
+   * through the turn-penalty ledger — the same ledger the round score, the
+   * voided-round total and the HUD already read, so no scoring path needs to
+   * know Qanoon exists. The discard itself stays legal: the rule is a penalty,
+   * not a block. Runs on every discard path (manual and the turn timeout's
+   * auto-discard both go through handleDiscard).
+   *
+   * The charge ESCALATES (owner, 2026-10-07): the seat's nth charge of the match
+   * costs n × QANOON_PILE_CHARGE — 100, 200, 300, … ({@link qanoonPileChargeFor}).
+   * `count` rides on the result so the boards can say which charge it was.
    * @param {GameRoom} room
    * @param {string} playerId
    * @param {Object} discarded - the card that just left the hand
-   * @returns {{value:number, reason:string, playerIndex:number}|null}
+   * @returns {{value:number, reason:string, playerIndex:number, count:number}|null}
    */
   static _applyQanoonPileCharge(room, playerId, discarded) {
     const take = room.qanoonPileTake;
@@ -362,17 +366,53 @@ class ActionHandlers {
     );
     if (melded) return null;
 
-    const charge = this.QANOON_PILE_CHARGE;
+    // A room restored from a snapshot older than the counter has none yet.
+    if (!(room.qanoonChargeCounts instanceof Map)) room.qanoonChargeCounts = new Map();
+    const count = (Number(room.qanoonChargeCounts.get(playerId)) || 0) + 1;
+    room.qanoonChargeCounts.set(playerId, count);
+    const charge = this.qanoonPileChargeFor(count);
     room.teamTurnPenalty.set(playerId, (room.teamTurnPenalty.get(playerId) || 0) + charge);
     const player = room.getPlayer(playerId);
     logger.info(
-      `[QANOON] ${playerId} discarded without melding a card from the pile taken this turn — charged ${charge}`
+      `[QANOON] ${playerId} discarded without melding a card from the pile taken this turn — charge #${count}: ${charge}`
     );
     return {
       value: -charge,
       reason: 'pile_not_melded',
       playerIndex: player ? player.playerIndex : null,
+      count,
     };
+  }
+
+  /**
+   * What a seat's [count]th QANOON rule-2 charge of the match costs:
+   * count × QANOON_PILE_CHARGE (100, 200, 300, …). Never less than one step.
+   * @param {number} count
+   * @returns {number}
+   */
+  static qanoonPileChargeFor(count) {
+    const n = Math.max(1, Math.floor(Number(count) || 0));
+    return this.QANOON_PILE_CHARGE * n;
+  }
+
+  /**
+   * QANOON charges booked so far this match, by SEAT ({playerIndex: count}),
+   * for the state frame: the client states the next charge ((count + 1) × 100)
+   * in its pile-take reminder, and must still know it after a reconnect. Only
+   * seats with a charge are listed.
+   * @param {GameRoom} room
+   * @returns {Object<number, number>}
+   */
+  static serializeQanoonCharges(room) {
+    const out = {};
+    const counts = room.qanoonChargeCounts;
+    if (!(counts instanceof Map)) return out;
+    counts.forEach((count, playerId) => {
+      const seat = room.getPlayer(playerId)?.playerIndex;
+      const n = Number(count) || 0;
+      if (Number.isInteger(seat) && n > 0) out[seat] = n;
+    });
+    return out;
   }
 
   /**
@@ -2003,7 +2043,11 @@ class ActionHandlers {
    * Applies to the WINNING side too: going out does not excuse an unmet
    * obligation.
    */
-  /** QANOON rule 2: what a pile take that never reaches a meld costs the seat. */
+  /**
+   * QANOON rule 2: the STEP a pile take that never reaches a meld costs the seat
+   * — the first charge of the match; the nth costs n × this
+   * ({@link qanoonPileChargeFor}).
+   */
   static get QANOON_PILE_CHARGE() {
     return 100;
   }

@@ -197,19 +197,21 @@ describe('first turn: the timeout auto-draws AND auto-discards, visibly, exactly
     expect(toOwner[0].payload.card, 'the drawer is told WHICH card').to.not.equal(null);
     expect(toOthers, 'the rest of the room is told once').to.have.length(1);
     expect(toOthers[0].payload.card, 'nobody else sees it').to.equal(null);
-    // The card thrown is the one the timeout drew for them — which is why the
-    // owner has to know it: otherwise there is nothing in its hand to throw.
-    // (A drawn WILD is the one exception: a timeout never throws a 2/joker
-    // while a natural card is legal, so a hand card goes instead.)
+    // The throw is CARD-AWARE (2026-10-07): usually the card the timeout drew
+    // for them — the junk they never chose to keep — but a hand card when the
+    // drawn one builds something (a pair, a run neighbour, a meld) or is a wild.
+    // Either way the owner was told which card it drew, so its board can fly the
+    // take into the hand and the throw out of it.
     const told = toOwner[0].payload.card;
     const thrown = discarded[0].payload.card;
     const key = (c) => `${c.suit}-${c.rank}-${c.cardId}`;
-    if (told.rank === '2' || told.rank === 'joker') {
-      expect(key(thrown)).to.not.equal(key(told));
-      expect(room.playerHands.get(player.playerId).map(key)).to.include(key(told));
-    } else {
-      expect(key(thrown)).to.equal(key(told));
+    const handNow = room.playerHands.get(player.playerId).map(key);
+    expect(handNow, 'the thrown card left the hand').to.not.include(key(thrown));
+    if (key(thrown) !== key(told)) {
+      expect(handNow, 'a drawn card the timeout kept is in the hand').to.include(key(told));
     }
+    // A dealt hand always holds a natural card, so a wild is never the throw.
+    expect(['2', 'joker']).to.not.include(thrown.rank);
   }
 
   describe('round 1', () => {

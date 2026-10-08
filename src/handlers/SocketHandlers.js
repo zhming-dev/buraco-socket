@@ -17,6 +17,11 @@ const { getGameEventRecorder } = require('../observability/GameEventRecorder');
 const replayCodec = require('../observability/replayCodec');
 const { randomBytes } = require('crypto');
 const { startBackendAttempt, abortBackendAttempt } = require('../services/BackendStartAttempt');
+const BotCoordinator = require('../bots/BotCoordinator');
+const BotStrategy = require('../bots/BotStrategy');
+
+/** The bots' card judgement, borrowed by the turn timeout (stateless). */
+const TIMEOUT_DISCARD_JUDGE = new BotStrategy();
 
 const ROOM_OWNER_ACTION_EVENT = '__brazilia_room_owner_action';
 
@@ -1413,6 +1418,11 @@ class SocketHandlers {
           cardIds: room.qanoonPileTake.cardIds,
         }
         : null,
+      // QANOON rule-2 charges each seat has booked this match ({seat: count}).
+      // The charge escalates (count + 1) × 100, and the client's pile-take
+      // reminder states the next one — which it must still know after a
+      // reconnect. Public: every charge was already announced to the table.
+      qanoonCharges: room.isQanoon?.() === true ? ActionHandlers.serializeQanoonCharges(room) : null,
       turnTimeLimit: room.turnTimeLimit,
       turnTimeLimitSeconds: room.turnTimeLimit,
       targetScore: room.targetScore,
@@ -10351,27 +10361,25 @@ class SocketHandlers {
       }
     }
 
-    // Step 2: Auto-discard. A timeout must never THROW AWAY A WILDCARD (2 / joker):
-    // wilds are the most valuable cards in Brazilia, so auto-tossing one punishes an
-    // inattentive player far more than a natural card would. Selection order:
+    // Step 2: Auto-discard — CARD-AWARE (owner, 2026-10-07): the timeout throws
+    // the card the player can least use, judged the way the bots judge their own
+    // throws (see _timeoutDiscardOrder). Selection order:
     //   1. only cards that PASS validateDiscard (never force an illegal / closing
     //      discard — that would corrupt scoring; see the no-blind-fallback note);
-    //   2. prefer NON-WILD cards — a wild is discarded ONLY when no natural card is
-    //      legally discardable (e.g. a hand of nothing but wilds);
-    //   3. within the preferred pool, throw back a freshly auto-drawn card if we
-    //      have one (the player never chose to keep it), else the LOWEST-value card
-    //      so the timeout costs the fewest points.
+    //   2. never a WILDCARD (2 / joker) while a natural card is legal — wilds are
+    //      the most valuable cards in Brazilia, and a wild goes only when nothing
+    //      else may (e.g. a hand of nothing but wilds);
+    //   3. a card that can no longer be melded (fits none of the side's melds,
+    //      no same-rank partner, no same-suit neighbour in the hand) goes before
+    //      any card that still builds something; among those, one that would
+    //      feed an opponent's meld is held back, then the freshly auto-drawn
+    //      card (the player never chose to keep it), then the cheaper card. When
+    //      every card builds something, the least useful goes, by the bots' own
+    //      ranking.
     // If NOTHING is legally discardable, cardToDiscard stays null and we fall
     // through to _forceAdvanceTurn below (turn skipped safely) — this also covers
     // the "only a lone 2 remains" case, where the wild cannot legally close.
     const GameValidator = require('../validators/GameValidator');
-    const isWild = (c) => c && (c.rank === 'joker' || c.rank === '2');
-    // The SCORING table, not a fourth private copy of it. This used to hard-code
-    // the classic values (2 -> 20, joker -> 30) and so was blind to the ruleset:
-    // in PROFESSIONAL a 2 is worth 10 and a joker 0, which inverts the ordering
-    // and made the "throw the cheapest card" timeout pick the wrong card on
-    // every professional table.
-    const discardValue = (c) => ActionHandlers._cardValue(c, room.ruleset);
     const legalIn = (h) =>
       h.filter((c) => GameValidator.validateDiscard(room, playerId, c).isValid);
 
@@ -10422,14 +10430,7 @@ class SocketHandlers {
         candidates = [pick, ...legal.filter((c) => c !== pick)];
       }
     } else {
-      const byValue = (cards) => cards.slice().sort((a, b) => discardValue(a) - discardValue(b));
-      const nonWild = byValue(legal.filter((c) => !isWild(c)));
-      const wild = byValue(legal.filter(isWild));
-      const pool = nonWild.length > 0 ? nonWild : wild;
-      const first = autoDrawnCard && pool.includes(autoDrawnCard) ? autoDrawnCard : pool[0];
-      if (first) {
-        candidates = [first, ...nonWild.filter((c) => c !== first), ...wild.filter((c) => c !== first)];
-      }
+      candidates = this._timeoutDiscardOrder(room, currentPlayer, legal, autoDrawnCard);
     }
 
     let advanced = false;
@@ -10503,6 +10504,70 @@ class SocketHandlers {
       );
       this._forceAdvanceTurn(room);
     }
+  }
+
+  /**
+   * The order a timed-out seat's auto-throw is tried in, best first — Step 2 of
+   * _onTurnTimerExpired. Every card in [legal] already passed validateDiscard.
+   *
+   * CARD-AWARE (owner, 2026-10-07: "otomatis throw kartu yang gabisa dimeld"):
+   *   1. a WILD goes last;
+   *   2. a card that can no longer be melded — extends none of the side's
+   *      melds, no same-rank partner, no same-suit neighbour in the hand — goes
+   *      before any card that still builds something;
+   *   3. among those, one that would slot straight into an OPPONENT's meld is
+   *      held back; then the card this expiry drew (the player never chose to
+   *      keep it); then the cheaper card — the pick timeouts always made;
+   *   4. when every card builds something, the least useful goes first, by the
+   *      bots' own ranking (BotStrategy._discardScore at the `hard` level, so
+   *      card counting is on).
+   * The judgement only ORDERS legal cards. If it ever fails, every card counts
+   * as unjudged and the order falls back to drawn-then-cheapest.
+   * @param {GameRoom} room
+   * @param {PlayerSession} player - the seat whose clock ran out
+   * @param {Object[]} legal
+   * @param {Object|null} autoDrawnCard - the card this expiry drew, if any
+   * @returns {Object[]}
+   */
+  _timeoutDiscardOrder(room, player, legal, autoDrawnCard) {
+    const isWild = (c) => c && (c.rank === 'joker' || c.rank === '2');
+    // The SCORING table, not a private copy of it: the ruleset decides what a 2
+    // or a joker is worth (pro: 10 / 0, classic: 20 / 30).
+    const value = (c) => ActionHandlers._cardValue(c, room.ruleset);
+    let judged = null;
+    try {
+      const state = { ...BotCoordinator.seatState(room, player), botLevel: 'hard' };
+      judged = TIMEOUT_DISCARD_JUDGE.timeoutJudgements(state, legal);
+    } catch (error) {
+      logger.warn(
+        `[TURN_TIMER] Card-aware pick failed for ${player.playerId}, using drawn-then-cheapest: ${error.message}`
+      );
+    }
+    const entries = legal.map((card, i) => {
+      const j = judged ? judged[i] : null;
+      return {
+        card,
+        wild: isWild(card) ? 1 : 0,
+        useful: j && j.useful && !isWild(card) ? 1 : 0,
+        feeds: j && j.feedsOpponent ? 1 : 0,
+        score: j && Number.isFinite(Number(j.score)) ? Number(j.score) : 0,
+        drawn: card === autoDrawnCard ? 1 : 0,
+      };
+    });
+    entries.sort((a, b) => {
+      if (a.wild !== b.wild) return a.wild - b.wild;
+      if (a.useful !== b.useful) return a.useful - b.useful;
+      if (a.useful) {
+        // Everything left builds something: give up the least of it.
+        if (a.score !== b.score) return b.score - a.score;
+      } else if (a.feeds !== b.feeds) {
+        // Junk either way: keep back what an opponent could lay straight down.
+        return a.feeds - b.feeds;
+      }
+      if (a.drawn !== b.drawn) return b.drawn - a.drawn;
+      return value(a.card) - value(b.card);
+    });
+    return entries.map((entry) => entry.card);
   }
 
   /**

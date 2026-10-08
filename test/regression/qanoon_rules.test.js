@@ -18,6 +18,8 @@ const { GameRoom } = require('../../src/models');
 const { Card } = require('../../src/models/Deck');
 const PlayerSession = require('../../src/models/PlayerSession');
 const { GameRoomStatus } = require('../../src/constants');
+const FailureManager = require('../../src/managers/FailureManager');
+const SocketHandlers = require('../../src/handlers/SocketHandlers');
 
 const c = (rank, suit) => new Card(suit, rank);
 const run = (suit, ranks) => ranks.map((r) => c(r, suit));
@@ -171,7 +173,12 @@ describe('#qanoon', () => {
       const { room, hand } = tookPile();
       const res = ActionHandlers.handleDiscard(room, 'p1', hand[2]);
       expect(res.success, res.error).to.equal(true);
-      expect(res.broadcast.qanoonPenalty).to.deep.equal({ value: -100, reason: 'pile_not_melded', playerIndex: 0 });
+      expect(res.broadcast.qanoonPenalty).to.deep.equal({
+        value: -100,
+        reason: 'pile_not_melded',
+        playerIndex: 0,
+        count: 1,
+      });
       expect(room.teamTurnPenalty.get('p1')).to.equal(100);
       // …and the HUD/round board read it from the ledger they already use.
       expect(ActionHandlers.serializeTeamRoundState(room).teamTurnPenalty.teamA).to.equal(100);
@@ -221,6 +228,110 @@ describe('#qanoon', () => {
       const { room } = tookPile();
       room.nextTurn();
       expect(room.qanoonPileTake).to.equal(null);
+    });
+  });
+
+  describe('rule 2 — the charge escalates (owner, 2026-10-07)', () => {
+    /**
+     * One offence by [seat]: it took a 2-card pile it cannot use and throws a
+     * junk card. Returns the broadcast's qanoonPenalty.
+     */
+    const offend = (room, seat = 'p1') => {
+      const taken = [c('7', 'hearts'), c('8', 'hearts')];
+      const junk = c('K', 'clubs');
+      room.playerHands.set(seat, [junk, c('J', 'diamonds'), ...taken]);
+      room.qanoonPileTake = { playerId: seat, cardIds: taken.map((t) => String(t.cardId)) };
+      room.currentTurn = room.getPlayer(seat).playerIndex;
+      room.hasDrawnCard = true;
+      const res = ActionHandlers.handleDiscard(room, seat, junk);
+      expect(res.success, res.error).to.equal(true);
+      return res.broadcast.qanoonPenalty;
+    };
+
+    it('the 1st charge is 100, the 2nd 200, the 3rd 300 — and the round total adds them up', () => {
+      const room = makeRoom();
+      expect(offend(room)).to.include({ value: -100, count: 1 });
+      expect(offend(room)).to.include({ value: -200, count: 2 });
+      expect(offend(room)).to.include({ value: -300, count: 3 });
+      expect(room.teamTurnPenalty.get('p1')).to.equal(600);
+      expect(ActionHandlers._computeScores(room, null, null).teamScores.teamA.turnPenalty).to.equal(600);
+    });
+
+    it('qanoonPileChargeFor is count × 100, never below one step', () => {
+      expect(ActionHandlers.qanoonPileChargeFor(1)).to.equal(100);
+      expect(ActionHandlers.qanoonPileChargeFor(4)).to.equal(400);
+      expect(ActionHandlers.qanoonPileChargeFor(0)).to.equal(100);
+      expect(ActionHandlers.qanoonPileChargeFor(undefined)).to.equal(100);
+    });
+
+    it('each seat has its own count', () => {
+      const room = makeRoom();
+      offend(room, 'p1');
+      offend(room, 'p1');
+      expect(offend(room, 'p2')).to.include({ value: -100, count: 1, playerIndex: 1 });
+      expect(room.teamTurnPenalty.get('p2')).to.equal(100);
+    });
+
+    it('a clean turn in between does not reset it', () => {
+      const room = makeRoom();
+      offend(room);
+      room.currentTurn = 0;
+      room.hasDrawnCard = true;
+      room.playerHands.set('p1', [c('K', 'clubs'), c('J', 'diamonds')]);
+      expect(ActionHandlers.handleDiscard(room, 'p1', room.playerHands.get('p1')[0]).success).to.equal(true);
+      expect(offend(room)).to.include({ value: -200, count: 2 });
+    });
+
+    it('is match-long: a new round keeps counting while its round total starts at 0', () => {
+      const room = makeRoom();
+      offend(room);
+      offend(room);
+      room.startGame(); // the per-round reset
+      expect(room.teamTurnPenalty.get('p1')).to.equal(0);
+      expect(offend(room)).to.include({ value: -300, count: 3 });
+      expect(room.teamTurnPenalty.get('p1')).to.equal(300);
+    });
+
+    it('survives a restart: the persisted room keeps the count', async () => {
+      const room = makeRoom();
+      offend(room);
+      offend(room);
+      let persisted = null;
+      const noop = () => {};
+      const manager = new FailureManager(
+        null,
+        { setex: (key, ttl, json) => { persisted = json; } },
+        null,
+        { debug: noop, info: noop, warn: noop, error: noop }
+      );
+      await manager.persistGameState(room);
+      const rebuilt = manager._reconstructGameRoom(JSON.parse(persisted));
+      expect(rebuilt.qanoonChargeCounts.get('p1')).to.equal(2);
+      // …and a snapshot from before the counter existed starts it at nothing.
+      const legacy = manager._reconstructGameRoom({ roomId: 'legacy', maxPlayers: 2 });
+      expect(legacy.qanoonChargeCounts.size).to.equal(0);
+    });
+
+    it('a room restored without the map still charges (and starts it)', () => {
+      const room = makeRoom();
+      delete room.qanoonChargeCounts;
+      expect(offend(room)).to.include({ value: -100, count: 1 });
+      expect(room.qanoonChargeCounts.get('p1')).to.equal(1);
+    });
+
+    it('every state frame carries the counts by seat, so the next charge is known after a reconnect', () => {
+      const room = makeRoom();
+      offend(room, 'p1');
+      offend(room, 'p1');
+      offend(room, 'p2');
+      expect(ActionHandlers.serializeQanoonCharges(room)).to.deep.equal({ 0: 2, 1: 1 });
+
+      const handlers = Object.create(SocketHandlers.prototype);
+      handlers._nextRoundDelayMs = () => 0;
+      expect(handlers._serializeRoomGameSettings(room).qanoonCharges).to.deep.equal({ 0: 2, 1: 1 });
+
+      const plain = makeRoom({ qanoon: false });
+      expect(handlers._serializeRoomGameSettings(plain).qanoonCharges).to.equal(null);
     });
   });
 
