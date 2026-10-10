@@ -214,10 +214,10 @@ class ActionHandlers {
     }
     const resolvedCard = taken.cards[0];
     room.playerHands.set(playerId, taken.remaining);
-    // QANOON rule 2 — judged on the hand as it stands after the thrown card has
-    // left it, and BEFORE the minimum-meld audit below can hand cards back: the
-    // pile card the player did meld counts even if that audit later rolls the
-    // meld back (it has its own consequence; this charge is for never trying).
+    // QANOON rule 2 — judged after the thrown card has left the hand, and BEFORE
+    // the minimum-meld audit below can hand cards back: a meld the player did lay
+    // counts even if that audit later rolls it back (it has its own consequence;
+    // this charge is for never trying).
     const qanoonPenalty = this._applyQanoonPileCharge(room, playerId, resolvedCard);
     const toPile = resolvedCard && typeof resolvedCard.toJSON === 'function'
       ? resolvedCard
@@ -333,14 +333,19 @@ class ActionHandlers {
   }
 
   /**
-   * QANOON rule 2: a seat that took the discard pile this turn must lay at least
-   * one of the taken cards before it discards; a discard that ends the turn with
-   * every taken card still in hand (the one being thrown aside) charges the seat
-   * through the turn-penalty ledger — the same ledger the round score, the
-   * voided-round total and the HUD already read, so no scoring path needs to
+   * QANOON rule 2: a seat that took the discard pile this turn must meld
+   * something before it discards. ANY meld settles it (owner, 2026-10-10): a new
+   * meld or an add to a meld, made of any cards — the taken ones need not be
+   * among them. Only a pile take followed by a turn that lays nothing at all is
+   * charged, through the turn-penalty ledger — the same ledger the round score,
+   * the voided-round total and the HUD already read, so no scoring path needs to
    * know Qanoon exists. The discard itself stays legal: the rule is a penalty,
    * not a block. Runs on every discard path (manual and the turn timeout's
    * auto-discard both go through handleDiscard).
+   *
+   * "Melded this turn" is read off turnMeldedCards, the turn's own ledger: an
+   * undo takes its cards back off it, so a meld laid and undone does not count,
+   * and every turn start empties it.
    *
    * The charge ESCALATES (owner, 2026-10-07): the seat's nth charge of the match
    * costs n × QANOON_PILE_CHARGE — 100, 200, 300, … ({@link qanoonPileChargeFor}).
@@ -357,6 +362,9 @@ class ActionHandlers {
     if (!take || take.playerId !== playerId || !Array.isArray(take.cardIds) || take.cardIds.length === 0) {
       return null;
     }
+    if ((room.turnMeldedCards?.get(playerId) || []).length > 0) return null;
+    // A taken card that left the hand other than by this discard was melded.
+    // Covered by the ledger above; kept for a room restored without one.
     const discardedId = this._cardId(discarded);
     const inHand = new Set(
       (room.playerHands.get(playerId) || []).map((c) => String(this._cardId(c)))
@@ -374,7 +382,7 @@ class ActionHandlers {
     room.teamTurnPenalty.set(playerId, (room.teamTurnPenalty.get(playerId) || 0) + charge);
     const player = room.getPlayer(playerId);
     logger.info(
-      `[QANOON] ${playerId} discarded without melding a card from the pile taken this turn — charge #${count}: ${charge}`
+      `[QANOON] ${playerId} took the pile and discarded without melding anything this turn — charge #${count}: ${charge}`
     );
     return {
       value: -charge,
