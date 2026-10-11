@@ -533,6 +533,50 @@
     return c;
   }
 
+  /** A generated card back: frame, patterned field, medallion. */
+  function backCardEl(back) {
+    var c = el('div', 'lk-card lk-back');
+    c.style.background = back.frame;
+    var fieldEl = el('div', 'lk-field');
+    fieldEl.style.background = backField(back);
+    var medal = el('div', 'lk-medal');
+    medal.style.border = '1.5px solid ' + back.accent;
+    medal.style.background = rgba(back.deep, 0.6);
+    c.appendChild(fieldEl);
+    c.appendChild(medal);
+    c.title = back.label + ' back';
+    return c;
+  }
+
+  /**
+   * A picker tile's picture of one built-in look: a felt, a backdrop, a back
+   * or a face. A token this mirror does not know gets a neutral tile.
+   * @param {string} slot  'table_theme' | 'card_back_style' | 'card_face_style' | 'background_style'
+   */
+  function swatch(slot, value) {
+    var t = find(listFor(slot), value);
+    var box = el('div', 'lk-sw lk-sw-' + slot.split('_')[0]);
+    if (!t) {
+      box.classList.add('unknown');
+      return box;
+    }
+    if (slot === 'table_theme') {
+      box.style.background = t.outer;
+      var felt = el('div', 'lk-sw-felt');
+      felt.style.background =
+        'radial-gradient(ellipse at 50% 18%, ' + t.wash + ' 0%, ' + t.felt + ' 72%)';
+      felt.style.border = '2px solid ' + t.border;
+      box.appendChild(felt);
+    } else if (slot === 'background_style') {
+      box.style.background = backgroundCss(t);
+    } else if (slot === 'card_back_style') {
+      box.appendChild(backCardEl(t));
+    } else {
+      box.appendChild(faceCard(t, 'A', 'hearts'));
+    }
+    return box;
+  }
+
   /**
    * The preview: surround, felt (theme or uploaded image), frame, a deck back,
    * two faces, and chips saying which slots the skins map holds (the rest stay
@@ -579,20 +623,13 @@
     felt.appendChild(name);
 
     var cards = el('div', 'lk-cards');
-    var backCard = el('div', 'lk-card lk-back' + (backImg ? ' img' : ''));
+    var backCard;
     if (backImg) {
+      backCard = el('div', 'lk-card lk-back img');
       backCard.style.backgroundImage = cssUrl(backImg);
       backCard.title = 'uploaded card back';
     } else {
-      backCard.style.background = back.frame;
-      var fieldEl = el('div', 'lk-field');
-      fieldEl.style.background = backField(back);
-      var medal = el('div', 'lk-medal');
-      medal.style.border = '1.5px solid ' + back.accent;
-      medal.style.background = rgba(back.deep, 0.6);
-      backCard.appendChild(fieldEl);
-      backCard.appendChild(medal);
-      backCard.title = back.label + ' back';
+      backCard = backCardEl(back);
     }
     cards.appendChild(backCard);
     cards.appendChild(faceCard(face, 'A', 'hearts'));
@@ -670,6 +707,7 @@
     FACES: FACES,
     BACKGROUNDS: BACKGROUNDS,
     render: render,
+    swatch: swatch,
     label: label,
     options: options,
     WIRE_KEYS: [

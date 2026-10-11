@@ -77,6 +77,11 @@
     return node;
   }
 
+  /** A line icon from icons.js (window.Icons), or null when it is not loaded. */
+  function icon(name, cls) {
+    return window.Icons && window.Icons.has(name) ? window.Icons.svg(name, cls) : null;
+  }
+
   function clear(node) {
     while (node && node.firstChild) node.removeChild(node.firstChild);
     return node;
@@ -920,7 +925,8 @@
     function paint() {
       var src = objectUrl || safeUrl(opts.current);
       thumb.style.backgroundImage = src ? cssUrl(src) : 'none';
-      thumb.textContent = src ? '' : '🖼';
+      clear(thumb);
+      if (!src) append(thumb, icon('image'));
       name.textContent = picked
         ? picked.name + ' · ' + Math.round(picked.size / 1024) + ' KB (not saved yet)'
         : opts.current
@@ -986,7 +992,7 @@
     return h(
       'div',
       { class: 'state-box' },
-      opts.icon ? h('div', { class: 'big', text: opts.icon }) : null,
+      opts.icon ? h('div', { class: 'big' }, icon(opts.icon) || opts.icon) : null,
       opts.title ? h('div', { class: 'title', text: opts.title }) : null,
       opts.text ? h('div', null, opts.text) : null,
       opts.action || null
@@ -998,7 +1004,7 @@
     var notConfigured = err && (err.status === 501 || err.code === 'ADMIN_PROXY_NOT_CONFIGURED');
     var notConnected = err && err.code === 'NOT_CONNECTED';
     return stateBox({
-      icon: notConfigured ? '🔌' : notConnected ? '🔑' : '⚠️',
+      icon: notConfigured ? 'plug' : notConnected ? 'key' : 'alert',
       title: notConfigured
         ? 'The admin API is not configured on this socket'
         : notConnected
@@ -1063,6 +1069,7 @@
 
   window.BuracoAdmin = {
     h: h,
+    icon: icon,
     clear: clear,
     safeUrl: safeUrl,
     cssUrl: cssUrl,
