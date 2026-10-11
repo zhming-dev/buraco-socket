@@ -29,6 +29,12 @@
 
   var MB = 1024 * 1024;
   var IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+  // Uploads are shrunk to fit this before they leave the browser: the web
+  // server in front of a socket often keeps nginx's 1 MB request limit, and
+  // the app draws skin images at most 1024 px wide anyway.
+  var UPLOAD_TARGET = 900 * 1024;
+  var MAX_SOURCE_BYTES = 40 * MB;
+  var MAX_EDGE = { wide: 1600, card: 640 };
   // One section per thing a player sees. `imageKey` slots can take an upload
   // (wlive-api `<imageKey>_file`, same size limits as here).
   var SLOTS = [
@@ -39,9 +45,9 @@
       tokenKey: 'table_theme',
       imageKey: 'table_skin',
       presetLabel: 'Colour',
-      maxBytes: 8 * MB,
       shape: 'wide',
-      imageHint: 'Covers the felt. Landscape PNG, JPEG or WebP, up to 8 MB.',
+      imageHint:
+        'Covers the felt. Landscape PNG, JPEG or WebP; large images are shrunk before upload.',
       catalogImage: 'table_background',
     },
     {
@@ -51,9 +57,9 @@
       tokenKey: 'background_style',
       imageKey: 'background_skin',
       presetLabel: 'Colour',
-      maxBytes: 8 * MB,
       shape: 'wide',
-      imageHint: 'Fills the screen around the table. Landscape, up to 8 MB.',
+      imageHint:
+        'Fills the screen around the table. Landscape; large images are shrunk before upload.',
       catalogImage: 'background_image',
     },
     {
@@ -63,9 +69,8 @@
       tokenKey: 'card_back_style',
       imageKey: 'card_skin',
       presetLabel: 'Design',
-      maxBytes: 4 * MB,
       shape: 'card',
-      imageHint: 'Portrait card art, up to 4 MB.',
+      imageHint: 'Portrait card art; large images are shrunk before upload.',
       catalogImage: 'card_back',
     },
     {
@@ -220,6 +225,84 @@
     v.file = file;
     v.objectUrl = file ? URL.createObjectURL(file) : null;
     if (file) v.from = null;
+    else v.prepared = null;
+  }
+
+  function readImage(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        resolve(img);
+      };
+      img.onerror = function () {
+        URL.revokeObjectURL(url);
+        reject(new Error('That image could not be read.'));
+      };
+      img.src = url;
+    });
+  }
+
+  function hasAlpha(img) {
+    var c = document.createElement('canvas');
+    c.width = 48;
+    c.height = 48;
+    var g = c.getContext('2d');
+    g.drawImage(img, 0, 0, 48, 48);
+    var d = g.getImageData(0, 0, 48, 48).data;
+    for (var i = 3; i < d.length; i += 4) if (d[i] < 250) return true;
+    return false;
+  }
+
+  /**
+   * The file to upload for slot `s`: as picked when it is small enough and no
+   * bigger than the slot can use, else redrawn at most MAX_EDGE px and
+   * re-encoded (JPEG; PNG when it has transparency) until it is under
+   * UPLOAD_TARGET. Resolves {file, w, h, changed, original}.
+   */
+  function prepareUpload(file, s) {
+    var maxEdge = MAX_EDGE[s.shape] || MAX_EDGE.wide;
+    return readImage(file).then(function (img) {
+      var w = img.naturalWidth;
+      var h0 = img.naturalHeight;
+      if (Math.max(w, h0) <= maxEdge && file.size <= UPLOAD_TARGET) {
+        return { file: file, w: w, h: h0, changed: false, original: file.size };
+      }
+      var alpha = file.type !== 'image/jpeg' && hasAlpha(img);
+      var type = alpha ? 'image/png' : 'image/jpeg';
+      var scale = Math.min(1, maxEdge / Math.max(w, h0));
+      var quality = 0.86;
+      function attempt(n) {
+        var cw = Math.max(1, Math.round(w * scale));
+        var ch = Math.max(1, Math.round(h0 * scale));
+        var c = document.createElement('canvas');
+        c.width = cw;
+        c.height = ch;
+        var g = c.getContext('2d');
+        g.imageSmoothingQuality = 'high';
+        g.drawImage(img, 0, 0, cw, ch);
+        return new Promise(function (resolve) {
+          c.toBlob(resolve, type, alpha ? undefined : quality);
+        }).then(function (blob) {
+          if (!blob) throw new Error('This browser could not re-encode the image.');
+          if (blob.size > UPLOAD_TARGET && n < 10) {
+            if (!alpha && quality > 0.67) quality -= 0.1;
+            else scale *= 0.8;
+            return attempt(n + 1);
+          }
+          var name = file.name.replace(/\.[^.]+$/, '') + (alpha ? '.png' : '.jpg');
+          return {
+            file: new File([blob], name, { type: type }),
+            w: cw,
+            h: ch,
+            changed: true,
+            original: file.size,
+          };
+        });
+      }
+      return attempt(0);
+    });
   }
 
   function resetDraft() {
@@ -706,14 +789,22 @@
           'Use a PNG, JPEG or WebP image (that file is ' + (file.type || 'unknown') + ').';
         return;
       }
-      if (file.size > s.maxBytes) {
-        err.textContent =
-          'Too large: ' + fileSize(file.size) + ' (max ' + fileSize(s.maxBytes) + ').';
+      if (file.size > MAX_SOURCE_BYTES) {
+        err.textContent = 'Too large to read: ' + fileSize(file.size) + '.';
         return;
       }
-      setFile(s, file);
-      replaceSlot(s);
-      syncApply();
+      err.textContent = 'Preparing…';
+      prepareUpload(file, s).then(
+        function (out) {
+          setFile(s, out.file);
+          v.prepared = out;
+          replaceSlot(s);
+          syncApply();
+        },
+        function (e) {
+          err.textContent = e.message;
+        }
+      );
     }
     input.onchange = function () {
       var f = input.files && input.files[0];
@@ -743,7 +834,12 @@
           h('div', {
             class: 'sm',
             text: v.file
-              ? fileSize(v.file.size) + ' · uploaded when you apply'
+              ? (v.prepared ? v.prepared.w + '×' + v.prepared.h + ' · ' : '') +
+                fileSize(v.file.size) +
+                (v.prepared && v.prepared.changed
+                  ? ' (shrunk from ' + fileSize(v.prepared.original) + ')'
+                  : '') +
+                ' · uploaded when you apply'
               : 'already uploaded',
           }),
           h(
@@ -1097,6 +1193,14 @@
                   st.slots[s.id].url = r.data.url;
                 },
                 function (err) {
+                  // No answer at all, or nginx's 413: the web server in front
+                  // of this socket refused the size before the socket saw it.
+                  if (err && (err.status === 0 || err.status === 413)) {
+                    err.message =
+                      'the upload was cut off before this socket answered (' +
+                      fileSize(st.slots[s.id].file.size) +
+                      '). The web server in front of it limits the request size; allow at least 10 MB there (nginx client_max_body_size 10m).';
+                  }
                   // Point the message at the slot whose image was refused.
                   if (err && err.status !== 401) {
                     err.fields = {};
