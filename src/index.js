@@ -57,6 +57,7 @@ const OccupancyMonitor = require('./observability/OccupancyMonitor');
 const { getGameEventRecorder } = require('./observability/GameEventRecorder');
 const { isDevAuthorized, sendRoomLogs, handleDevMatches } = require('./dev/devApi');
 const { createDevAdminProxy, isAdminProxyPath } = require('./dev/adminProxy');
+const { createSkinOverrideApi, isSkinOverrideApiPath } = require('./dev/skinOverrideApi');
 
 class BraziliaServer {
   constructor() {
@@ -188,6 +189,24 @@ class BraziliaServer {
             );
             res.end(buf);
           });
+          return;
+        }
+
+        // Skin overrides straight on this socket (they only ever live here):
+        // /dev/api/skin-override + /dev/api/skin-media for the console, and the
+        // PUBLIC /media/skins/<id> the app loads uploaded images from. See
+        // src/dev/skinOverrideApi.js.
+        if (isSkinOverrideApiPath(req.url)) {
+          if (!this._skinOverrideApi) {
+            this._skinOverrideApi = createSkinOverrideApi({
+              redis: this.redisClient,
+              socketHandlers: this.socketHandlers,
+              devSecret: () => this.config.security.webhookSecret,
+              publicUrl: this.config.server.publicUrl,
+              logger,
+            });
+          }
+          this._skinOverrideApi.handle(req, res);
           return;
         }
 

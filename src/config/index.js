@@ -19,6 +19,9 @@ const config = {
     port: parseInt(process.env.PORT, 10) || 8080,
     environment: process.env.NODE_ENV || 'development',
     host: process.env.HOST || '0.0.0.0',
+    // How the app reaches this server (e.g. https://ws-buraco.wblue.id), for the
+    // URLs of admin-uploaded skin images. Unset → the console page's own origin.
+    publicUrl: process.env.PUBLIC_URL || null,
   },
 
   // Socket.IO configuration

@@ -7,17 +7,28 @@ class InMemoryRedis {
   async setex(key, ttlSeconds, value) {
     this._clearExpiry(key);
     this.store.set(key, value);
+    if (ttlSeconds > 0) this._armExpiry(key, Date.now() + ttlSeconds * 1000);
+    return 'OK';
+  }
 
-    if (ttlSeconds > 0) {
-      const timer = setTimeout(() => {
+  /**
+   * Deletes `key` at `deadline` (epoch ms). setTimeout caps at 2^31-1 ms
+   * (~24.8 days) and fires at once beyond it, so a longer TTL re-arms in steps.
+   */
+  _armExpiry(key, deadline) {
+    const timer = setTimeout(
+      () => {
+        if (Date.now() < deadline) {
+          this._armExpiry(key, deadline);
+          return;
+        }
         this.store.delete(key);
         this.expiryTimers.delete(key);
-      }, ttlSeconds * 1000);
-
-      this.expiryTimers.set(key, timer);
-    }
-
-    return 'OK';
+      },
+      Math.min(Math.max(0, deadline - Date.now()), 2147483647)
+    );
+    if (typeof timer.unref === 'function') timer.unref();
+    this.expiryTimers.set(key, timer);
   }
 
   /**
@@ -49,14 +60,7 @@ class InMemoryRedis {
 
     this._clearExpiry(key);
     this.store.set(key, value);
-    if (ttlMs > 0) {
-      const timer = setTimeout(() => {
-        this.store.delete(key);
-        this.expiryTimers.delete(key);
-      }, ttlMs);
-      if (typeof timer.unref === 'function') timer.unref();
-      this.expiryTimers.set(key, timer);
-    }
+    if (ttlMs > 0) this._armExpiry(key, Date.now() + ttlMs);
     return 'OK';
   }
 
@@ -64,14 +68,7 @@ class InMemoryRedis {
   async pexpire(key, ttlMs) {
     if (!this.store.has(key)) return 0;
     this._clearExpiry(key);
-    if (ttlMs > 0) {
-      const timer = setTimeout(() => {
-        this.store.delete(key);
-        this.expiryTimers.delete(key);
-      }, ttlMs);
-      if (typeof timer.unref === 'function') timer.unref();
-      this.expiryTimers.set(key, timer);
-    }
+    if (ttlMs > 0) this._armExpiry(key, Date.now() + ttlMs);
     return 1;
   }
 

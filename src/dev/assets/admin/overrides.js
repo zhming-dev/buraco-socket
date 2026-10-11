@@ -13,8 +13,11 @@
  *      image (no URLs to type; a catalog skin can prefill everything);
  * and the preview + Apply stay in view on the right.
  *
- * wlive-api: GET rooms, GET skins, GET skin-tokens, POST (multipart) / DELETE
- * skin-override.
+ * An override only ever lives on this socket, so the page talks to the socket
+ * itself: GET/POST /dev/api/skin-override, POST /dev/api/skin-media (the
+ * socket keeps uploaded images and serves them at /media/skins/*). The look
+ * lists are SkinLook's mirror of the SDK. wlive-api is only asked for the
+ * catalog behind "Start from a catalog skin", and the page works without it.
  */
 (function () {
   'use strict';
@@ -74,9 +77,6 @@
       presetLabel: 'Design',
     },
   ];
-  // Slots an older wlive-api does not know: it drops them without an error,
-  // so the page checks first (GET skin-tokens lists background_style).
-  var NEEDS_NEW_API = { background: true };
 
   var SOURCE = {
     admin_room: { text: 'Admin, this game', cls: 'info' },
@@ -93,9 +93,9 @@
   ];
 
   var st = {
-    page: null, // {socket_reachable, global_override, rooms}
+    page: null, // {global_override, rooms}
     catalog: [],
-    tokens: null,
+    catalogError: null,
     error: null,
     loading: false,
     scope: 'room',
@@ -115,15 +115,6 @@
     return out;
   }
   st.slots = emptySlots();
-
-  /** The wlive-api behind the proxy knows the background slot and takes uploads. */
-  function apiIsCurrent() {
-    return !st.tokens || Array.isArray(st.tokens.background_style);
-  }
-
-  function slotDisabled(s) {
-    return !!NEEDS_NEW_API[s.id] && !apiIsCurrent();
-  }
 
   function liveRooms() {
     return ((st.page && st.page.rooms) || []).filter(function (r) {
@@ -163,11 +154,7 @@
   }
 
   function tokenLabel(s, value) {
-    var list = (st.tokens && st.tokens[s.tokenKey]) || [];
-    var t = list.find(function (x) {
-      return x.value === value;
-    });
-    return t ? t.label : L.label(s.tokenKey, value);
+    return L.label(s.tokenKey, value);
   }
 
   function fileSize(bytes) {
@@ -210,14 +197,13 @@
 
   function changedSlots() {
     return SLOTS.filter(function (s) {
-      return !slotDisabled(s) && st.slots[s.id].mode !== 'own';
+      return st.slots[s.id].mode !== 'own';
     });
   }
 
   /** Why Apply is not possible right now, or null. */
   function blocker() {
     if (!st.page) return 'Loading the tables…';
-    if (!st.page.socket_reachable) return 'wlive-api cannot reach the game server.';
     if (st.scope === 'room' && !pickedRoom()) return 'Pick a table in step 1.';
     var changed = changedSlots();
     if (!changed.length) return 'Change at least one thing in step 2.';
@@ -249,9 +235,8 @@
     resetDraft();
     st.catalogId = String(skin.id);
     SLOTS.forEach(function (s) {
-      if (slotDisabled(s)) return;
       var v = st.slots[s.id];
-      var img = s.catalogImage && apiIsCurrent() ? skin[s.catalogImage] : null;
+      var img = s.catalogImage ? skin[s.catalogImage] : null;
       var tok = skin[s.tokenKey];
       if (img) {
         v.mode = 'image';
@@ -404,7 +389,11 @@
     clr.onclick = function (e) {
       e.stopPropagation();
       A.busy(clr, 'Clearing…', function () {
-        return A.api.del('skin-override', { scope: 'room', room_id: r.room_id });
+        return A.devApi.post('skin-override', {
+          action: 'clear',
+          scope: 'room',
+          roomId: r.room_id,
+        });
       })
         .then(function () {
           A.toast('Override cleared on ' + roomLabel(r));
@@ -582,8 +571,6 @@
         )
       )
     );
-    ui.apiNote = h('div');
-    ui.look.appendChild(ui.apiNote);
     ui.slotBox = h('div');
     ui.look.appendChild(ui.slotBox);
     renderLook();
@@ -593,8 +580,19 @@
     var sel = ui.catalogSelect;
     A.clear(sel);
     sel.appendChild(
-      h('option', { value: '', text: st.catalog.length ? 'None' : 'No skins in the catalog' })
+      h('option', {
+        value: '',
+        text: st.catalog.length
+          ? 'None'
+          : st.catalogError
+            ? 'Catalog unavailable'
+            : 'No skins in the catalog',
+      })
     );
+    sel.disabled = !st.catalog.length;
+    sel.title = st.catalogError
+      ? 'The catalog comes from wlive-api, which did not answer: ' + st.catalogError.message
+      : '';
     st.catalog.forEach(function (s) {
       sel.appendChild(
         h('option', { value: String(s.id), text: s.name + (s.is_active ? '' : ' (not on sale)') })
@@ -604,25 +602,6 @@
   }
 
   function renderLook() {
-    A.clear(ui.apiNote);
-    if (!apiIsCurrent()) {
-      ui.apiNote.appendChild(
-        h(
-          'div',
-          { class: 'banner warn' },
-          icon('alert'),
-          h(
-            'div',
-            { class: 'grow' },
-            h('b', { text: 'This wlive-api is older than the console. ' }),
-            h('span', {
-              class: 'muted',
-              text: 'It ignores the background and uploaded images, so only the built-in table and card looks can be applied. Deploy wlive-api with the background slot (feat/buraco-game c8cd1fab and its migration) to unlock them.',
-            })
-          )
-        )
-      );
-    }
     A.clear(ui.slotBox);
     ui.slotEls = {};
     SLOTS.forEach(function (s) {
@@ -633,14 +612,11 @@
 
   function renderSlot(s) {
     var v = st.slots[s.id];
-    var disabled = slotDisabled(s);
-    var images = !!s.imageKey && apiIsCurrent();
     var modes = [
       { value: 'own', label: "Player's own" },
       { value: 'preset', label: s.presetLabel },
     ];
-    if (images) modes.push({ value: 'image', label: 'Upload image' });
-    if (v.mode === 'image' && !images) v.mode = 'own';
+    if (s.imageKey) modes.push({ value: 'image', label: 'Upload image' });
     var sec = h('section', { class: 'ov-slot' });
     var mode = A.seg(modes, v.mode, function (m) {
       v.mode = m;
@@ -658,10 +634,9 @@
           h('div', { class: 'd', text: s.desc })
         ),
         h('span', { class: 'spacer' }),
-        disabled ? h('span', { class: 'badge warn', text: 'needs a newer wlive-api' }) : mode.root
+        mode.root
       )
     );
-    if (disabled) return sec;
     if (v.mode === 'own') {
       sec.appendChild(
         h('div', {
@@ -692,7 +667,7 @@
       class: 'ov-swatches',
       attrs: { role: 'radiogroup', 'aria-label': s.title },
     });
-    L.options(s.tokenKey, st.tokens).forEach(function (o) {
+    L.options(s.tokenKey, null).forEach(function (o) {
       var on = v.token === o.value;
       var b = h(
         'button',
@@ -872,7 +847,6 @@
     A.clear(ui.preview).appendChild(L.render(previewSkins(), { chips: false }));
     A.clear(ui.summary);
     SLOTS.forEach(function (s) {
-      if (slotDisabled(s)) return;
       var stt = slotStatus(s);
       ui.summary.appendChild(
         h(
@@ -948,30 +922,12 @@
     A.clear(ui.banners);
     var p = st.page;
     if (!p) return;
-    if (!p.socket_reachable) {
-      ui.banners.appendChild(
-        h(
-          'div',
-          { class: 'banner warn' },
-          icon('wifi-off'),
-          h(
-            'div',
-            { class: 'grow' },
-            h('b', { text: 'wlive-api cannot reach the game server. ' }),
-            h('span', {
-              class: 'muted',
-              text: 'The tables below come from its database only, and nothing can be applied right now.',
-            })
-          )
-        )
-      );
-    }
     var g = p.global_override;
     if (g) {
       var clearBtn = h('button', { class: 'small', text: 'Clear' });
       clearBtn.onclick = function () {
         A.busy(clearBtn, 'Clearing…', function () {
-          return A.api.del('skin-override', { scope: 'global' });
+          return A.devApi.post('skin-override', { action: 'clear', scope: 'global' });
         })
           .then(function () {
             A.toast('Override cleared for every table');
@@ -1008,28 +964,58 @@
     }
   }
 
+  /** The socket's room (listRoomsForAdmin) in the shape this page draws. */
+  function fromSocket(r) {
+    var players = (r.players || []).map(function (p) {
+      return {
+        seat: p.playerIndex,
+        name: p.playerName,
+        player_id: p.playerId,
+        is_bot: p.isBot,
+        connected: p.isConnected,
+      };
+    });
+    var host = (r.players || []).find(function (p) {
+      return r.hostPlayerId != null && String(p.playerId) === String(r.hostPlayerId);
+    });
+    return {
+      room_id: r.roomId,
+      code: r.roomId,
+      name: r.name,
+      // Every room on the socket can take an override (a lobby's lasts into its game).
+      live: true,
+      status: r.status,
+      bet: r.bet,
+      player_count: r.playerCount,
+      max_players: r.maxPlayers,
+      spectator_count: r.spectatorCount,
+      host: host ? { name: host.playerName } : null,
+      players: players,
+      skins: r.skins || {},
+      skins_source: r.skinsSource,
+      skins_expires_at: r.skinsExpiresAt,
+      skin_override: r.skinOverride,
+    };
+  }
+
   function load() {
     if (st.loading) return;
     st.loading = true;
     ui.refresh.disabled = true;
-    var hadTokens = !!st.tokens;
     Promise.all([
-      A.api.get('rooms'),
+      A.devApi.get('skin-override'),
+      // Optional: only "Start from a catalog skin" needs wlive-api.
       A.api.get('skins').catch(function (e) {
         return { error: e };
       }),
-      st.tokens
-        ? Promise.resolve({ data: st.tokens })
-        : A.api.get('skin-tokens').catch(function (e) {
-            return { error: e };
-          }),
     ])
       .then(
         function (out) {
+          var d = out[0].data || {};
           st.error = null;
-          st.page = out[0].data || { rooms: [] };
+          st.page = { rooms: (d.rooms || []).map(fromSocket), global_override: d.global || null };
           st.catalog = Array.isArray(out[1].data) ? out[1].data : [];
-          if (out[2].data) st.tokens = out[2].data;
+          st.catalogError = out[1].error || null;
         },
         function (err) {
           st.error = err;
@@ -1040,13 +1026,12 @@
         st.loading = false;
         ui.refresh.disabled = false;
         if (st.roomId && !pickedRoom()) st.roomId = '';
-        // The only live table is the only choice: pick it.
+        // The only table is the only choice: pick it.
         if (st.scope === 'room' && !st.roomId && liveRooms().length === 1)
           st.roomId = liveRooms()[0].room_id;
         fillCatalogSelect();
         renderBanners();
         renderWhere();
-        if (!hadTokens && st.tokens) renderLook();
         syncApply();
       });
   }
@@ -1058,20 +1043,8 @@
     var mins = Number(st.duration);
     var durationMinutes =
       global && st.duration !== '' && Number.isFinite(mins) && mins > 0 ? Math.round(mins) : null;
-    // Multipart: uploads travel as files; wlive-api stores them and pushes
-    // their URLs to the socket.
-    var body = new FormData();
-    body.append('scope', st.scope);
-    if (!global) body.append('room_id', room.room_id);
-    if (durationMinutes) body.append('duration_minutes', String(durationMinutes));
-    var uploads = [];
-    changedSlots().forEach(function (s) {
-      var v = st.slots[s.id];
-      if (v.mode === 'preset') body.append('skins[' + s.tokenKey + ']', v.token);
-      else if (v.file) {
-        body.append(s.imageKey + '_file', v.file, v.file.name);
-        uploads.push(s);
-      } else body.append('skins[' + s.imageKey + ']', v.url);
+    var uploads = changedSlots().filter(function (s) {
+      return st.slots[s.id].mode === 'image' && st.slots[s.id].file;
     });
     var n = audience();
     var ask = global
@@ -1112,24 +1085,52 @@
         if (!ok) return;
         A.showErrors(null, fieldMap, ui.formError);
         return A.busy(ui.go, uploads.length ? 'Uploading…' : 'Applying…', function () {
-          return A.api.upload('skin-override', body);
+          // Images first, one by one, onto this socket; each answers with the
+          // URL the app loads. A stored image becomes the slot's URL, so a
+          // second apply (another table) does not upload it again.
+          var chain = Promise.resolve();
+          uploads.forEach(function (s) {
+            chain = chain.then(function () {
+              return A.devApi.file('skin-media', st.slots[s.id].file).then(
+                function (r) {
+                  setFile(s, null);
+                  st.slots[s.id].url = r.data.url;
+                },
+                function (err) {
+                  // Point the message at the slot whose image was refused.
+                  if (err && err.status !== 401) {
+                    err.fields = {};
+                    err.fields[s.imageKey] = [s.title + ' image: ' + err.message];
+                  }
+                  throw err;
+                }
+              );
+            });
+          });
+          return chain.then(function () {
+            var skins = {};
+            changedSlots().forEach(function (s) {
+              var v = st.slots[s.id];
+              if (v.mode === 'preset') skins[s.tokenKey] = v.token;
+              else skins[s.imageKey] = v.url;
+            });
+            return A.devApi.post('skin-override', {
+              action: 'set',
+              scope: st.scope,
+              roomId: global ? undefined : room.room_id,
+              durationMinutes: durationMinutes,
+              skins: skins,
+            });
+          });
         }).then(function (res) {
           var d = res.data || {};
-          // The uploads are stored now: keep their URLs, so applying the same
-          // look to another table does not upload them again.
-          uploads.forEach(function (s) {
-            if (d.skins && d.skins[s.imageKey]) {
-              setFile(s, null);
-              st.slots[s.id].url = d.skins[s.imageKey];
-            }
-          });
           if (uploads.length) renderLook();
           A.toast(
             'Applied. ' +
               A.fmtInt(n) +
               (n === 1 ? ' person is' : ' people are') +
               ' seeing it now' +
-              (d.expires_at ? ' (ends ' + A.relTime(d.expires_at) + ')' : '') +
+              (d.expiresAt ? ' (ends ' + A.relTime(d.expiresAt) + ')' : '') +
               '.'
           );
           load();

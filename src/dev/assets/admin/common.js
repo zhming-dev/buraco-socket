@@ -431,8 +431,12 @@
           init.body = JSON.stringify(opts.json);
         } else if (opts.form) {
           init.body = opts.form; // the browser writes the multipart boundary
+        } else if (opts.file) {
+          headers['Content-Type'] = opts.file.type || 'application/octet-stream';
+          init.body = opts.file; // raw bytes
         }
-        return fetch('/dev/api/admin/' + path + queryString(opts.query), init).catch(function (e) {
+        var base = opts.base || '/dev/api/admin/';
+        return fetch(base + path + queryString(opts.query), init).catch(function (e) {
           throw AdminError(0, 'NETWORK', 'Could not reach this socket server (' + e.message + ')');
         });
       })
@@ -475,6 +479,22 @@
     },
     upload: function (path, form) {
       return request('POST', path, { form: form });
+    },
+  };
+
+  /**
+   * This socket's own /dev/api (no wlive-api): same auth, actor and error
+   * shape as `api`. Used where the state lives on the socket (Overrides).
+   */
+  var devApi = {
+    get: function (path, query) {
+      return request('GET', path, { query: query, base: '/dev/api/' });
+    },
+    post: function (path, json) {
+      return request('POST', path, { json: json === undefined ? {} : json, base: '/dev/api/' });
+    },
+    file: function (path, file) {
+      return request('POST', path, { file: file, base: '/dev/api/' });
     },
   };
 
@@ -1079,6 +1099,7 @@
     relTime: relTime,
     initials: initials,
     api: api,
+    devApi: devApi,
     request: request,
     describe: describe,
     AdminError: AdminError,
