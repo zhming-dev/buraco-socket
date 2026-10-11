@@ -11,7 +11,11 @@
  *   - every table: carries a duration; when it lapses the socket reverts on
  *     its own (this page shows the countdown).
  *
- * wlive-api: GET rooms, GET skins, GET skin-tokens, POST/DELETE skin-override.
+ * Images (table, card back, background) are UPLOADED with the override —
+ * there is no URL to type; a catalog skin can prefill them.
+ *
+ * wlive-api: GET rooms, GET skins, GET skin-tokens, POST (multipart) / DELETE
+ * skin-override.
  */
 (function () {
   'use strict';
@@ -30,6 +34,31 @@
     ['table_theme', 'Table theme'],
     ['card_back_style', 'Card back'],
     ['card_face_style', 'Card face'],
+    ['background_style', 'Background'],
+  ];
+  var MB = 1024 * 1024;
+  // Same limits wlive-api enforces on `<key>_file`.
+  var IMAGE_SLOTS = [
+    {
+      key: 'table_skin',
+      label: 'Table image',
+      max: 8 * MB,
+      wide: true,
+      hint: 'PNG, JPEG or WebP, up to 8 MB. Shown on the felt instead of the theme colour.',
+    },
+    {
+      key: 'card_skin',
+      label: 'Card back image',
+      max: 4 * MB,
+      hint: 'Up to 4 MB. Replaces the generated back.',
+    },
+    {
+      key: 'background_skin',
+      label: 'Background image',
+      max: 8 * MB,
+      wide: true,
+      hint: 'Up to 8 MB. Fills the screen around the table instead of the background colours.',
+    },
   ];
 
   var st = {
@@ -41,7 +70,7 @@
     scope: 'room',
     roomId: '',
     duration: '60',
-    draft: {},
+    draft: {}, // tokens, plus image URLs a catalog skin filled in
   };
   var ui = {};
   var ticker = null;
@@ -56,11 +85,27 @@
     return r.name || r.code || r.room_id;
   }
 
+  /** What would be sent as `skins[...]`: tokens + image URLs not being replaced by an upload. */
   function draftSkins() {
     var out = {};
     L.WIRE_KEYS.forEach(function (k) {
+      if (pickedFile(k)) return;
       var v = st.draft[k];
       if (typeof v === 'string' && v.trim()) out[k] = v.trim();
+    });
+    return out;
+  }
+
+  function pickedFile(key) {
+    var p = ui.pickers && ui.pickers[key];
+    return p ? p.file() : null;
+  }
+
+  /** The look as it will land, a picked file shown from its local preview. */
+  function previewSkins() {
+    var out = draftSkins();
+    IMAGE_SLOTS.forEach(function (s) {
+      if (pickedFile(s.key)) out[s.key] = ui.pickers[s.key].url();
     });
     return out;
   }
@@ -152,9 +197,12 @@
           table_theme: skin.table_theme || '',
           card_back_style: skin.card_back_style || '',
           card_face_style: skin.card_face_style || '',
+          background_style: skin.background_style || '',
           table_skin: skin.table_background || '',
           card_skin: skin.card_back || '',
+          background_skin: skin.background_image || '',
         };
+        resetPickers();
         fillDraftInputs();
         syncForm();
       }
@@ -170,22 +218,37 @@
     form.appendChild(ui.tokenBox);
     buildTokenSelects();
 
-    ui.tableUrl = h('input', { type: 'url', placeholder: 'https://…', spellcheck: false });
-    ui.tableUrl.oninput = function () {
-      st.draft.table_skin = ui.tableUrl.value;
-      syncForm();
-    };
-    ui.fTableUrl = A.field('Table image (URL)', ui.tableUrl, {
-      hint: 'An image the app can load. Upload one on the Skins page to get a URL.',
+    ui.pickers = {};
+    ui.dropImage = {};
+    ui.imageFields = {};
+    IMAGE_SLOTS.forEach(function (slot) {
+      var picker = A.filePicker({
+        accept: 'image/png,image/jpeg,image/webp',
+        maxBytes: slot.max,
+        wide: slot.wide,
+        onChange: syncForm,
+      });
+      // A catalog skin's image can be dropped without uploading another.
+      var drop = h('button', {
+        type: 'button',
+        class: 'small ghost',
+        text: 'Remove image',
+        hidden: true,
+        on: {
+          click: function () {
+            st.draft[slot.key] = '';
+            fillDraftInputs();
+            syncForm();
+          },
+        },
+      });
+      ui.pickers[slot.key] = picker;
+      ui.dropImage[slot.key] = drop;
+      ui.imageFields[slot.key] = A.field(slot.label, h('div', null, picker.root, drop), {
+        hint: slot.hint,
+      });
+      form.appendChild(ui.imageFields[slot.key].root);
     });
-    form.appendChild(ui.fTableUrl.root);
-    ui.backUrl = h('input', { type: 'url', placeholder: 'https://…', spellcheck: false });
-    ui.backUrl.oninput = function () {
-      st.draft.card_skin = ui.backUrl.value;
-      syncForm();
-    };
-    ui.fBackUrl = A.field('Card back image (URL)', ui.backUrl);
-    form.appendChild(ui.fBackUrl.root);
 
     ui.lifetime = h('div', { class: 'hint' });
     form.appendChild(ui.lifetime);
@@ -199,6 +262,7 @@
         click: function () {
           st.draft = {};
           ui.catalogSelect.value = '';
+          resetPickers();
           fillDraftInputs();
           syncForm();
         },
@@ -210,9 +274,11 @@
     ui.fieldMap = {
       room_id: ui.fRoom,
       duration_minutes: ui.fDuration,
-      table_skin: ui.fTableUrl,
-      card_skin: ui.fBackUrl,
     };
+    IMAGE_SLOTS.forEach(function (s) {
+      ui.fieldMap[s.key] = ui.imageFields[s.key];
+      ui.fieldMap[s.key + '_file'] = ui.imageFields[s.key];
+    });
     TOKEN_SLOTS.forEach(function (s) {
       ui.fieldMap[s[0]] = ui.tokenFields[s[0]];
     });
@@ -250,17 +316,26 @@
         f.control.value = v;
       }
     });
-    ui.tableUrl.value = st.draft.table_skin || '';
-    ui.backUrl.value = st.draft.card_skin || '';
+    IMAGE_SLOTS.forEach(function (s) {
+      var url = st.draft[s.key] || null;
+      ui.pickers[s.key].setCurrent(url);
+      ui.dropImage[s.key].hidden = !url;
+    });
+  }
+
+  function resetPickers() {
+    IMAGE_SLOTS.forEach(function (s) {
+      ui.pickers[s.key].reset();
+    });
   }
 
   function syncForm() {
     var global = st.scope === 'global';
     ui.fRoom.root.hidden = global;
     ui.fDuration.root.hidden = !global;
-    A.clear(ui.preview).appendChild(L.render(draftSkins()));
+    A.clear(ui.preview).appendChild(L.render(previewSkins()));
     var n = audience();
-    var nothing = !Object.keys(draftSkins()).length;
+    var nothing = !Object.keys(previewSkins()).length;
     ui.apply.textContent = 'Apply to ' + A.fmtInt(n) + (n === 1 ? ' person' : ' people');
     ui.apply.disabled = nothing || (!global && !st.roomId);
     var mins = Number(st.duration);
@@ -613,14 +688,30 @@
 
   function apply() {
     var skins = draftSkins();
-    if (!Object.keys(skins).length) return;
+    var shown = previewSkins();
+    if (!Object.keys(shown).length) return;
     var global = st.scope === 'global';
     if (!global && !st.roomId) return;
-    var body = { scope: st.scope, skins: skins };
     var mins = Number(st.duration);
-    if (!global) body.room_id = st.roomId;
-    else if (st.duration !== '' && Number.isFinite(mins) && mins > 0)
-      body.duration_minutes = Math.round(mins);
+    var durationMinutes =
+      global && st.duration !== '' && Number.isFinite(mins) && mins > 0 ? Math.round(mins) : null;
+    // Multipart: picked images travel as files; wlive-api stores them and
+    // pushes their URLs to the socket.
+    var body = new FormData();
+    body.append('scope', st.scope);
+    if (!global) body.append('room_id', st.roomId);
+    if (durationMinutes) body.append('duration_minutes', String(durationMinutes));
+    Object.keys(skins).forEach(function (k) {
+      body.append('skins[' + k + ']', skins[k]);
+    });
+    var uploads = [];
+    IMAGE_SLOTS.forEach(function (s) {
+      var f = pickedFile(s.key);
+      if (f) {
+        body.append(s.key + '_file', f, f.name);
+        uploads.push(s.key);
+      }
+    });
     var n = audience();
     var ask = global
       ? A.confirmDialog({
@@ -630,8 +721,8 @@
             h('div', {
               text:
                 'Every live table switches to this look now' +
-                (body.duration_minutes
-                  ? ' for ' + A.fmtInt(body.duration_minutes) + ' minutes.'
+                (durationMinutes
+                  ? ' for ' + A.fmtInt(durationMinutes) + ' minutes.'
                   : ', until someone clears it.'),
             }),
             h(
@@ -646,7 +737,7 @@
               h('li', null, 'Slots left on "keep the player\'s own" stay each player\'s choice.'),
               h('li', null, 'A one-table override still wins on its own table.')
             ),
-            h('div', { style: { marginTop: '10px' } }, L.render(skins, { small: true })),
+            h('div', { style: { marginTop: '10px' } }, L.render(shown, { small: true })),
           ],
         })
       : Promise.resolve(true);
@@ -654,10 +745,19 @@
       .then(function (ok) {
         if (!ok) return;
         A.showErrors(null, ui.fieldMap, ui.formError);
-        return A.busy(ui.apply, 'Applying…', function () {
-          return A.api.post('skin-override', body);
+        return A.busy(ui.apply, uploads.length ? 'Uploading…' : 'Applying…', function () {
+          return A.api.upload('skin-override', body);
         }).then(function (res) {
           var d = res.data || {};
+          // The uploads are stored now: keep their URLs so applying the same
+          // look again (another table) does not upload them a second time.
+          uploads.forEach(function (k) {
+            if (d.skins && d.skins[k]) st.draft[k] = d.skins[k];
+          });
+          if (uploads.length) {
+            resetPickers();
+            fillDraftInputs();
+          }
           A.toast(
             'Override applied — ' +
               A.fmtInt(n) +

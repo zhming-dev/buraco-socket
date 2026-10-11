@@ -3989,9 +3989,21 @@ class SocketHandlers {
   // carries an expiry and is persisted so a restart neither loses nor revives
   // it past its deadline.
 
-  /** Skins keys an override may carry; anything else is dropped. */
+  /**
+   * Skins keys an override may carry; anything else is dropped. `background_*`
+   * is the surround around the felt (SDK BuracoBackgroundStyle / an image), not
+   * the felt itself (`table_*`).
+   */
   static get SKIN_OVERRIDE_KEYS() {
-    return ['table_skin', 'card_skin', 'table_theme', 'card_back_style', 'card_face_style'];
+    return [
+      'table_skin',
+      'card_skin',
+      'background_skin',
+      'table_theme',
+      'card_back_style',
+      'card_face_style',
+      'background_style',
+    ];
   }
 
   /** Normalises an admin skins object to the allowed keys (non-empty strings only). */

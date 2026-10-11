@@ -4,8 +4,8 @@
 /**
  * Skins — the catalog players buy and equip, and what an override can push
  * onto a table. A skin is uploaded artwork (table image, card back — "admin
- * bisa upload meja dan punggung kartu") and/or the engine's built-in looks by
- * token. The preview is the SDK palette, so a skin is judged before it ships.
+ * bisa upload meja dan punggung kartu" — and the background around the table)
+ * and/or the engine's built-in looks by token. The preview is the SDK palette, so a skin is judged before it ships.
  *
  * wlive-api: GET skins, POST skins (multipart), POST skins/{id} (multipart
  * update), DELETE skins/{id} (deactivates instead when players own it),
@@ -33,6 +33,13 @@
       label: 'Card back image',
       max: 4 * MB,
       hint: 'Up to 4 MB. Replaces the generated back.',
+    },
+    {
+      key: 'background_image',
+      label: 'Background image',
+      max: 8 * MB,
+      wide: true,
+      hint: 'Up to 8 MB. Fills the screen around the table instead of the background colours.',
     },
     {
       key: 'preview_image',
@@ -273,6 +280,7 @@
       table_theme: row ? row.table_theme || '' : '',
       card_back_style: row ? row.card_back_style || '' : '',
       card_face_style: row ? row.card_face_style || '' : '',
+      background_style: row ? row.background_style || '' : '',
     };
     var clearFlags = {};
     var pickers = {};
@@ -288,10 +296,13 @@
       if (draft.table_theme) skins.table_theme = draft.table_theme;
       if (draft.card_back_style) skins.card_back_style = draft.card_back_style;
       if (draft.card_face_style) skins.card_face_style = draft.card_face_style;
+      if (draft.background_style) skins.background_style = draft.background_style;
       var t = currentImage('table_background');
       var b = currentImage('card_back');
+      var g = currentImage('background_image');
       if (t) skins.table_skin = t;
       if (b) skins.card_skin = b;
+      if (g) skins.background_skin = g;
       A.clear(previewBox).appendChild(L.render(skins, { ownLabel: 'not set' }));
     }
 
@@ -339,6 +350,7 @@
       ['table_theme', 'Table theme'],
       ['card_back_style', 'Card back'],
       ['card_face_style', 'Card face'],
+      ['background_style', 'Background'],
     ].forEach(function (s) {
       var sel = A.select(L.options(s[0], st.tokens), draft[s[0]], { placeholder: 'None' });
       sel.onchange = function () {
@@ -409,7 +421,8 @@
           { class: 'form-grid' },
           tokenFields.table_theme.root,
           tokenFields.card_back_style.root,
-          h('div', { class: 'wide' }, tokenFields.card_face_style.root)
+          tokenFields.card_face_style.root,
+          tokenFields.background_style.root
         ),
         h('div', { class: 'sec-title', text: 'Artwork' }),
         artBlocks,
@@ -455,8 +468,10 @@
       table_theme: tokenFields.table_theme,
       card_back_style: tokenFields.card_back_style,
       card_face_style: tokenFields.card_face_style,
+      background_style: tokenFields.background_style,
       table_background: artFields.table_background,
       card_back: artFields.card_back,
+      background_image: artFields.background_image,
       preview_image: artFields.preview_image,
     };
 
@@ -493,6 +508,7 @@
       fd.append('table_theme', draft.table_theme || '');
       fd.append('card_back_style', draft.card_back_style || '');
       fd.append('card_face_style', draft.card_face_style || '');
+      fd.append('background_style', draft.background_style || '');
       ARTWORK.forEach(function (a) {
         var file = pickers[a.key].file();
         if (file) fd.append(a.key, file, file.name);

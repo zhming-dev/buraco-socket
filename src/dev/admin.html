@@ -195,8 +195,10 @@
 
   /* ---- 1:1 board (geometry from the mobile TableGeometry, ocean palette) ---- */
   .board-wrap { position: relative; }
+  /* isolation: the cards/plates/HUD inside (z 5-80) stack only against each other,
+     so a board scrolled under the sticky header (z 5) stays under it. */
   .board {
-    position: relative; width: 100%; aspect-ratio: 852 / 393; overflow: hidden;
+    position: relative; isolation: isolate; width: 100%; aspect-ratio: 852 / 393; overflow: hidden;
     background: #16272B; border-radius: 14px;
     font-family: var(--sans); user-select: none;
   }

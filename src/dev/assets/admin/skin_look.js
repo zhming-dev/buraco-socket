@@ -7,6 +7,7 @@
  *   wlive-app buraco_sdk/lib/models/game_skin.dart        table themes
  *   wlive-app buraco_sdk/lib/models/card_back_style.dart  generated backs
  *   wlive-app buraco_sdk/lib/models/card_face_style.dart  card faces
+ *   wlive-app buraco_sdk/lib/models/background_style.dart game backgrounds
  * Token names ARE the Dart enum names — exactly what the socket carries in a
  * `skins` map. The pickers offer what wlive-api accepts (GET skin-tokens); this
  * file only knows how each token LOOKS. A token it does not know is still
@@ -14,7 +15,7 @@
  *
  * Honest about its limits: the backs are painted by Dart (CardBackPainter), so
  * the pattern here is a CSS stand-in over the SAME colours; anything uploaded
- * (table image, card back image) is shown exactly as it ships.
+ * (table, card back and background images) is shown exactly as it ships.
  */
 (function () {
   'use strict';
@@ -281,6 +282,50 @@
     };
   });
 
+  // The GAME BACKGROUND — the surround around the felt, not the felt.
+  // value, label, base (edges), glow (lit bloom up top), accent (bloom at the bottom)
+  var BACKGROUNDS = [
+    ['maroon', 'Maroon', '#14080B', '#4A1226', '#2A0C14'],
+    ['braziliaPlus', 'Brazilia Plus', '#0E0407', '#7A1232', '#4A3410'],
+    ['midnight', 'Midnight', '#05070F', '#1E2A52', '#0F1630'],
+    ['charcoal', 'Charcoal', '#0A0B0D', '#2E3339', '#17191E'],
+    ['forest', 'Forest', '#04100A', '#184A24', '#0B2414'],
+    ['ocean', 'Ocean', '#041318', '#104A58', '#072530'],
+    ['plum', 'Plum', '#0E0714', '#42245E', '#221232'],
+    ['ember', 'Ember', '#130703', '#662A0A', '#301305'],
+    ['slate', 'Slate', '#0B0F14', '#2E4258', '#182432'],
+    ['royalGold', 'Royal Gold', '#110C03', '#5A4412', '#2C2108'],
+    ['aurora', 'Aurora', '#03090C', '#105448', '#2C1454'],
+  ].map(function (r) {
+    return { value: r[0], label: r[1], base: r[2], glow: r[3], accent: r[4] };
+  });
+
+  /** The SDK's two layers (BuracoBackgroundSurface): the lit bloom over the base. */
+  function backgroundCss(bg) {
+    return (
+      'radial-gradient(ellipse 115% 115% at 50% -5%, ' +
+      bg.glow +
+      ' 0%, ' +
+      rgba(bg.glow, 0.55) +
+      ' 42%, ' +
+      rgba(bg.glow, 0) +
+      ' 100%), linear-gradient(180deg, ' +
+      bg.base +
+      ' 0%, ' +
+      bg.base +
+      ' 55%, ' +
+      bg.accent +
+      ' 100%)'
+    );
+  }
+
+  function listFor(slot) {
+    if (slot === 'table_theme') return THEMES;
+    if (slot === 'card_back_style') return BACKS;
+    if (slot === 'background_style') return BACKGROUNDS;
+    return FACES;
+  }
+
   function find(list, value) {
     for (var i = 0; i < list.length; i++) if (list[i].value === value) return list[i];
     return null;
@@ -492,7 +537,8 @@
    * The preview: surround, felt (theme or uploaded image), frame, a deck back,
    * two faces, and chips saying which slots the skins map holds (the rest stay
    * each player's own).
-   * @param {object} skins  wire map: table_skin, card_skin, table_theme, card_back_style, card_face_style
+   * @param {object} skins  wire map: table_skin, card_skin, background_skin, table_theme,
+   *   card_back_style, card_face_style, background_style
    * @param {{small?: boolean, chips?: boolean, heldLabel?: string, ownLabel?: string}} [opts]
    */
   function render(skins, opts) {
@@ -501,15 +547,22 @@
     var themeToken = skins.table_theme || null;
     var backToken = skins.card_back_style || null;
     var faceToken = skins.card_face_style || null;
+    var bgToken = skins.background_style || null;
     var theme = find(THEMES, themeToken) || THEMES[0];
+    var bg = find(BACKGROUNDS, bgToken);
     var back = find(BACKS, backToken) || BACKS[0];
     var face = find(FACES, faceToken) || FACES[0];
     var tableImg = window.BuracoAdmin ? window.BuracoAdmin.safeUrl(skins.table_skin) : null;
     var backImg = window.BuracoAdmin ? window.BuracoAdmin.safeUrl(skins.card_skin) : null;
+    var bgImg = window.BuracoAdmin ? window.BuracoAdmin.safeUrl(skins.background_skin) : null;
 
     var wrap = el('div', 'lk');
     var board = el('div', 'lk-board' + (opts.small ? ' small' : ''));
-    board.style.background = theme.outer;
+    // Nothing held → the theme's own surround, as the preview always drew it.
+    var ground = bg ? backgroundCss(bg) : theme.outer;
+    board.style.background = bgImg
+      ? cssUrl(bgImg) + ' center / cover no-repeat, ' + (bg ? bg.base : theme.outer)
+      : ground;
     var felt = el('div', 'lk-felt');
     felt.style.border = '2px solid ' + theme.border;
     felt.style.background = tableImg
@@ -580,15 +633,18 @@
           !find(FACES, faceToken)
         );
       else chip(false, 'face: ' + own);
+      if (bgImg) chip(true, 'background: uploaded image');
+      else if (bgToken)
+        chip(true, 'background: ' + (bg ? bg.label : bgToken + ' (no preview)'), !bg);
+      else chip(false, 'background: ' + own);
       wrap.appendChild(chips);
     }
     return wrap;
   }
 
-  /** Label of a token for a slot ('table_theme' | 'card_back_style' | 'card_face_style'). */
+  /** Label of a token for a slot ('table_theme' | 'card_back_style' | 'card_face_style' | 'background_style'). */
   function label(slot, value) {
-    var list = slot === 'table_theme' ? THEMES : slot === 'card_back_style' ? BACKS : FACES;
-    var t = find(list, value);
+    var t = find(listFor(slot), value);
     return t ? t.label : value;
   }
 
@@ -603,8 +659,7 @@
         return { value: t.value, label: t.label || label(slot, t.value) };
       });
     }
-    var list = slot === 'table_theme' ? THEMES : slot === 'card_back_style' ? BACKS : FACES;
-    return list.map(function (t) {
+    return listFor(slot).map(function (t) {
       return { value: t.value, label: t.label };
     });
   }
@@ -613,9 +668,20 @@
     THEMES: THEMES,
     BACKS: BACKS,
     FACES: FACES,
+    BACKGROUNDS: BACKGROUNDS,
     render: render,
     label: label,
     options: options,
-    WIRE_KEYS: ['table_skin', 'card_skin', 'table_theme', 'card_back_style', 'card_face_style'],
+    WIRE_KEYS: [
+      'table_skin',
+      'card_skin',
+      'background_skin',
+      'table_theme',
+      'card_back_style',
+      'card_face_style',
+      'background_style',
+    ],
+    /** The wire keys that carry an uploaded image's URL. */
+    IMAGE_KEYS: ['table_skin', 'card_skin', 'background_skin'],
   };
 })();

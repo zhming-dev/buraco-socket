@@ -103,6 +103,24 @@ describe('SocketHandlers admin skin override', () => {
     ]);
   });
 
+  it('carries the game background (token and image) like the table and card slots', async () => {
+    ctx = setup();
+    const { handler, room } = ctx;
+    const result = await handler.setSkinOverride({
+      scope: 'room',
+      roomId: 'skin-room',
+      skins: { background_style: 'royalGold', background_skin: 'https://cdn/bg.jpg' },
+    });
+    expect(result.success).to.equal(true);
+    expect(result.skins).to.deep.equal({ background_style: 'royalGold', background_skin: 'https://cdn/bg.jpg' });
+    // A background-only override leaves the owner's felt alone.
+    expect(handler._skinsPayloadFields(room).skins).to.deep.equal({
+      table_skin: 'https://cdn/owner-table.png',
+      background_style: 'royalGold',
+      background_skin: 'https://cdn/bg.jpg',
+    });
+  });
+
   it('rejects an override without usable skins or without a room', async () => {
     ctx = setup();
     expect((await ctx.handler.setSkinOverride({ scope: 'room', roomId: 'skin-room', skins: { junk: 'x' } })).success).to.equal(false);

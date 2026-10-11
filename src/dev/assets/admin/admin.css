@@ -139,7 +139,8 @@ input[type=number]:focus, input[type=url]:focus, textarea:focus { box-shadow: 0 
 .lk { display: flex; flex-direction: column; gap: 8px; }
 .lk-board { position: relative; border-radius: 12px; overflow: hidden; height: 190px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .05); }
 .lk-board.small { height: 132px; }
-.lk-felt { position: absolute; inset: 12px; border-radius: 10px; overflow: hidden; }
+/* Wider at the sides so the game background around the felt reads, as on a phone. */
+.lk-felt { position: absolute; inset: 14px 26px; border-radius: 10px; overflow: hidden; }
 .lk-felt .lk-name { position: absolute; left: 9px; top: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .2px; }
 .lk-felt .lk-divider { position: absolute; left: 50%; top: 14%; bottom: 14%; width: 2px; transform: translateX(-50%); opacity: .28; }
 .lk-cards { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; }
