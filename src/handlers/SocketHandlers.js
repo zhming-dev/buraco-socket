@@ -2368,8 +2368,15 @@ class SocketHandlers {
       }
       if (room.seatConnectionProtocol === 1) {
         const member = room.getPlayer(spectatorIdentity);
-        const memberSocket = member?.socketId;
-        const memberVersion = member?.apiSeatReservationVersion;
+        // The running game still seats this user: they come back as its
+        // PLAYER, whatever the transport remembered (owner, 2026-10-14 — see
+        // the live-seat rule on the player path). The API is not asked, so a
+        // REST forfeit row no longer detaches the seat from its connection.
+        if (member && (room.isInProgress() || room.awaitingNextRound)) {
+          const key = `${room.roomId}:${spectatorIdentity}`;
+          const resume = () => this._handleJoinRoom(socket, { ...data, playerId: spectatorIdentity, isSpectator: false }, joinEpoch, key);
+          return seatMutationKey === key ? resume() : this._serializeSeatMutation(key, resume);
+        }
         let participant;
         try {
           participant = await this._seatBackendRequest(room, 'room-participant', {
@@ -2391,17 +2398,6 @@ class SocketHandlers {
           // A role can change while REST replies are in flight. An internal
           // fallback already owns this actor queue; waiting on itself deadlocks.
           return seatMutationKey === key ? resume() : this._serializeSeatMutation(key, resume);
-        }
-        if (participant.isSpectator === true && member && room.isInProgress() &&
-            room.getPlayer(spectatorIdentity) === member && member.socketId === memberSocket &&
-            member.apiSeatReservationVersion === memberVersion && memberVersion === participant.reservationVersion) {
-          // A REST forfeit can beat its socket leave. Revoke the old connection
-          // without changing live hand/index data or settling the match twice.
-          if (this.gameService.getPlayerIdBySocket(memberSocket) === spectatorIdentity) {
-            this.gameService.socketToPlayer.delete(memberSocket);
-          }
-          member.disconnect();
-          member.socketId = null;
         }
         if (this.gameService.getPlayerIdBySocket(socket.id) === spectatorIdentity) {
           socket.emit(SocketEvents.ERROR, ErrorHandler.createErrorResponse('Your room role changed. Please reconnect.'));
@@ -2535,10 +2531,15 @@ class SocketHandlers {
       socket.emit(SocketEvents.ERROR, ErrorHandler.createErrorResponse('Authentication required to join this room'));
       return;
     }
-    if (targetRoom.seatConnectionProtocol === 1 && targetRoom.isInProgress()) {
-      const member = targetRoom.getPlayer(playerId);
-      const memberSocket = member?.socketId;
-      const memberVersion = member?.apiSeatReservationVersion;
+    // A LIVE seat belongs to its player until the game ends (owner,
+    // 2026-10-14: "game harus lanjut, dia harus reconnect posisi sebagai player
+    // yg barusan dc"). Someone the running game still seats is reconnecting,
+    // full stop: the API is not asked, so its answer — a forfeit row left by a
+    // REST leave, a slow or failed lookup — can never turn the returning player
+    // into a viewer of their own seat, and no await opens a window in which the
+    // old socket's late disconnect makes this join bail out without binding.
+    // The API decides only for someone the game does not seat.
+    if (targetRoom.seatConnectionProtocol === 1 && targetRoom.isInProgress() && !targetRoom.getPlayer(playerId)) {
       let participant;
       try {
         participant = await this._seatBackendRequest(targetRoom, 'room-participant', {
@@ -2549,8 +2550,7 @@ class SocketHandlers {
         return;
       }
       if (!joinIsCurrent() || this.gameService.getRoom(targetRoom.roomId) !== targetRoom ||
-          targetRoom.getPlayer(playerId) !== member || member?.socketId !== memberSocket ||
-          member?.apiSeatReservationVersion !== memberVersion) return;
+          targetRoom.getPlayer(playerId)) return;
       if (participant.authorized !== true || String(participant.playerId) !== String(playerId)) {
         socket.emit(SocketEvents.ERROR, ErrorHandler.createErrorResponse('Please join the room before watching'));
         return;
@@ -7879,6 +7879,30 @@ class SocketHandlers {
     // So: if this socket has a join in flight, answer AFTER it lands. The
     // function stays synchronous when there is no pending join, which is every
     // path a test drives directly.
+    //
+    // SEAT RECLAIM. The owner of a live seat asking for that seat's state from
+    // a connection the seat is not bound to — while nothing live holds the
+    // seat — gets it back first, through the ordinary join. Without this the
+    // answer below still hands that connection the full hand, so the board
+    // looks playable while every move bounces with "Not in a room" and the
+    // turn timer auto-plays the seat (seen in production after a phone call /
+    // app background). The app re-asks for state on every resume, so this
+    // closes the gap whatever made the rejoin itself miss.
+    if (!this._pendingJoins.has(socket.id)) {
+      const seat = this._liveSeatToReclaim(socket, data);
+      if (seat) {
+        logger.info(
+          `[GET_GAME_STATE] Reclaiming live seat ${seat.playerIndex} for ${seat.playerId} on socket ${socket.id}`
+        );
+        this._trackPendingJoin(socket.id, this.handleJoinRoom(socket, {
+          roomId: String(data.gameId),
+          playerId: String(seat.playerId),
+          playerName: seat.playerName,
+          avatarUrl: seat.avatarUrl || undefined,
+          reconnect: true,
+        }));
+      }
+    }
     const pendingJoin = this._pendingJoins.get(socket.id);
     if (pendingJoin) {
       let capHandle = null;
@@ -7907,6 +7931,30 @@ class SocketHandlers {
       return;
     }
     return this._respondWithGameState(socket, data);
+  }
+
+  /**
+   * The live seat a state request may reclaim for its connection, or null.
+   * Only the seat's own verified user, only while the game is still running
+   * (in a round or between rounds), and never from a connection that is still
+   * live — two connections of one player must not trade the seat back and
+   * forth; the explicit join stays the way to move a seat that is held.
+   * @param {Socket} socket
+   * @param {{gameId?: string, playerId?: string}} data
+   * @returns {Object|null} the seat (PlayerSession)
+   */
+  _liveSeatToReclaim(socket, data) {
+    const gameId = data?.gameId;
+    const playerId = data?.playerId;
+    if (gameId == null || playerId == null) return null;
+    if (!socket?.data?.authenticated || String(socket.data.userId) !== String(playerId)) return null;
+    const room = this.gameService.getRoom(gameId);
+    if (!room || !(room.isInProgress?.() || room.awaitingNextRound)) return null;
+    const seat = room.getPlayer(String(playerId));
+    if (!seat || seat.isBot) return null;
+    if (seat.socketId === socket.id) return null;
+    if (seat.socketId && this.io?.sockets?.sockets?.get(seat.socketId)) return null;
+    return seat;
   }
 
   /**

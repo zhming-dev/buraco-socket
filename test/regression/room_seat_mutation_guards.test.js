@@ -396,27 +396,123 @@ describe('room and seat mutation authority', () => {
     expect(handlers._pendingBackendLeaves.size).to.equal(0);
   });
 
+  // Owner, 2026-10-14: "Jangan dikick spectator atau jadiin forfeit, game harus
+  // lanjut, dia harus reconnect posisi sebagai player yg barusan dc". A seat the
+  // running game still holds is its player's — the API is not asked, so a
+  // forfeit row (or a dead API) can no longer demote the returning player.
   for (const spectatorIntent of [true, false]) {
-    it(`a forfeited live participant rejoins as viewer with spectator intent ${spectatorIntent}`, async () => {
+    it(`a live participant the API marked forfeited takes their own seat back (spectator intent ${spectatorIntent})`, async () => {
       enableBackend();
       room.status = GameRoomStatus.IN_PROGRESS;
       const old = room.getPlayer('a');
       old.apiSeatReservationVersion = 4;
+      const asked = [];
       handlers._seatBackendRequest = async (_room, path) => {
-        expect(path).to.equal('room-participant');
+        asked.push(path);
         return { authorized: true, playerId: 'a', isSpectator: true, reservationVersion: 4 };
       };
       const returning = socket('returning-a', 'a');
       await handlers.handleJoinRoom(returning, { roomId: room.roomId, playerId: 'a', playerName: 'A', isSpectator: spectatorIntent });
+      expect(asked).to.deep.equal([]);
       expect(room.getPlayer('a')).to.equal(old);
       expect(old.playerIndex).to.equal(1);
-      expect(old.isConnected).to.equal(false);
-      expect(old.socketId).to.equal(null);
+      expect(old.socketId).to.equal(returning.id);
+      expect(service.getPlayerIdBySocket(returning.id)).to.equal('a');
       expect(service.getPlayerIdBySocket('socket-a')).to.not.exist;
-      expect(service.getPlayerIdBySocket(returning.id)).to.not.exist;
-      expect(handlers.spectatorSocketToRoom.get(returning.id)).to.equal(room.roomId);
+      expect(handlers.spectatorSocketToRoom.has(returning.id)).to.equal(false);
     });
   }
+
+  it('a live participant reconnects even while the API cannot be reached', async () => {
+    enableBackend();
+    room.status = GameRoomStatus.IN_PROGRESS;
+    handlers._seatBackendRequest = async () => { throw new Error('API down'); };
+    const returning = socket('returning-a', 'a');
+    await handlers.handleJoinRoom(returning, { roomId: room.roomId, playerId: 'a', playerName: 'A' });
+    expect(room.getPlayer('a').socketId).to.equal(returning.id);
+    expect(service.getPlayerIdBySocket(returning.id)).to.equal('a');
+    expect(frames.some((f) => f.socketId === returning.id && f.event === 'error')).to.equal(false);
+  });
+
+  it('someone the live game does not seat is still decided by the API', async () => {
+    enableBackend();
+    room.status = GameRoomStatus.IN_PROGRESS;
+    const asked = [];
+    handlers._seatBackendRequest = async (_room, path) => {
+      asked.push(path);
+      return { authorized: true, playerId: 'outsider', isSpectator: true, reservationVersion: 0 };
+    };
+    const outsider = socket('outsider-socket', 'outsider');
+    await handlers.handleJoinRoom(outsider, { roomId: room.roomId, playerId: 'outsider', playerName: 'O' });
+    expect(asked).to.not.be.empty;
+    expect(asked.every((path) => path === 'room-participant')).to.equal(true);
+    expect(room.getPlayer('outsider')).to.not.exist;
+    expect(handlers.spectatorSocketToRoom.get(outsider.id)).to.equal(room.roomId);
+  });
+
+  describe('a state request reclaims a live seat nothing live holds', () => {
+    // The production shape: the returning socket ended up WATCHING its own
+    // seat ("Spectator 689 joined") while the seat had no connection, then
+    // asked for its state — got the full hand — and every move bounced with
+    // "Not in a room" while the turn timer auto-played the seat.
+    function strandedOwner({ seatSocket = null } = {}) {
+      enableBackend();
+      room.status = GameRoomStatus.IN_PROGRESS;
+      handlers._seatBackendRequest = async () => { throw new Error('the API must not be asked'); };
+      const seat = room.getPlayer('a');
+      sockets.delete('socket-a');
+      service.socketToPlayer.delete('socket-a');
+      seat.socketId = seatSocket;
+      const returning = viewer('a');
+      return { seat, returning };
+    }
+
+    it('rebinds the seat to the asking connection before answering', async () => {
+      const { seat, returning } = strandedOwner();
+      expect(service.getPlayerIdBySocket(returning.id)).to.not.exist;
+      handlers.handleGetGameState(returning, { gameId: room.roomId, playerId: 'a' });
+      await handlers._pendingJoins.get(returning.id);
+      expect(seat.socketId).to.equal(returning.id);
+      expect(service.getPlayerIdBySocket(returning.id)).to.equal('a');
+      expect(service.getPlayerRoom('a')).to.equal(room);
+      expect(handlers.spectatorSocketToRoom.has(returning.id)).to.equal(false);
+    });
+
+    it('also when the seat still points at a connection that is gone', async () => {
+      const { seat, returning } = strandedOwner({ seatSocket: 'socket-a' });
+      handlers.handleGetGameState(returning, { gameId: room.roomId, playerId: 'a' });
+      await handlers._pendingJoins.get(returning.id);
+      expect(seat.socketId).to.equal(returning.id);
+      expect(service.getPlayerIdBySocket(returning.id)).to.equal('a');
+    });
+
+    it('never takes a seat that a live connection holds', () => {
+      enableBackend();
+      room.status = GameRoomStatus.IN_PROGRESS;
+      const seat = room.getPlayer('a');
+      const second = viewer('a');
+      handlers.handleGetGameState(second, { gameId: room.roomId, playerId: 'a' });
+      expect(handlers._pendingJoins.has(second.id)).to.equal(false);
+      expect(seat.socketId).to.equal('socket-a');
+      expect(service.getPlayerIdBySocket(second.id)).to.not.exist;
+    });
+
+    it("never takes someone else's seat", () => {
+      const { seat } = strandedOwner();
+      const other = socket('other-socket', 'b');
+      handlers.handleGetGameState(other, { gameId: room.roomId, playerId: 'a' });
+      expect(handlers._pendingJoins.has(other.id)).to.equal(false);
+      expect(seat.socketId).to.equal(null);
+    });
+
+    it('does nothing before the game starts', () => {
+      const { seat, returning } = strandedOwner();
+      room.status = GameRoomStatus.WAITING;
+      handlers.handleGetGameState(returning, { gameId: room.roomId, playerId: 'a' });
+      expect(handlers._pendingJoins.has(returning.id)).to.equal(false);
+      expect(seat.socketId).to.equal(null);
+    });
+  });
 
   it('still resumes an active live paid participant who has stale spectator intent', async () => {
     enableBackend();
