@@ -687,10 +687,10 @@ class BotCoordinator {
       meldedThisTurn: room.meldedThisTurn === true,
       ruleset,
       professionalWellMode: room.professionalWellMode || 'indirect',
-      // QANOON: sets locked until the side has a buraco; a pile take must be
-      // followed by a meld (any meld) before the discard. qanoonPileCardIds are
-      // THIS bot's taken cards — the bot meets the rule the strict way, with one
-      // of them, which always settles it.
+      // QANOON: sets locked until the side has a buraco; a pile take must reach
+      // a meld before the discard (a taken card, or its twin from the hand).
+      // qanoonPileCardIds are THIS bot's taken cards — the bot meets the rule
+      // with one of them, which always settles it.
       qanoon: typeof room.isQanoon === 'function' && room.isQanoon(),
       qanoonPileCardIds:
         room.qanoonPileTake && room.qanoonPileTake.playerId === player.playerId

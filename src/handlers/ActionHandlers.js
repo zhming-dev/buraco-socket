@@ -333,19 +333,19 @@ class ActionHandlers {
   }
 
   /**
-   * QANOON rule 2: a seat that took the discard pile this turn must meld
-   * something before it discards. ANY meld settles it (owner, 2026-10-10): a new
-   * meld or an add to a meld, made of any cards — the taken ones need not be
-   * among them. Only a pile take followed by a turn that lays nothing at all is
-   * charged, through the turn-penalty ledger — the same ledger the round score,
-   * the voided-round total and the HUD already read, so no scoring path needs to
-   * know Qanoon exists. The discard itself stays legal: the rule is a penalty,
-   * not a block. Runs on every discard path (manual and the turn timeout's
-   * auto-discard both go through handleDiscard).
+   * QANOON rule 2: a seat that took the discard pile this turn must meld a card
+   * from it — a new meld or an add to a meld — before it discards. Its TWIN
+   * counts as that card (owner, 2026-10-13): the shoe is two decks, so the hand
+   * may already hold the other copy of a taken card (same rank AND suit), and
+   * the player cannot tell the two apart. Laying either copy settles the take;
+   * see {@link _qanoonPileSettled}. A meld of other cards does not (the
+   * 2026-10-10 "any meld settles it" relaxation is withdrawn).
    *
-   * "Melded this turn" is read off turnMeldedCards, the turn's own ledger: an
-   * undo takes its cards back off it, so a meld laid and undone does not count,
-   * and every turn start empties it.
+   * An unsettled take is charged through the turn-penalty ledger — the same
+   * ledger the round score, the voided-round total and the HUD already read, so
+   * no scoring path needs to know Qanoon exists. The discard itself stays
+   * legal: the rule is a penalty, not a block. Runs on every discard path
+   * (manual and the turn timeout's auto-discard both go through handleDiscard).
    *
    * The charge ESCALATES (owner, 2026-10-07): the seat's nth charge of the match
    * costs n × QANOON_PILE_CHARGE — 100, 200, 300, … ({@link qanoonPileChargeFor}).
@@ -362,17 +362,7 @@ class ActionHandlers {
     if (!take || take.playerId !== playerId || !Array.isArray(take.cardIds) || take.cardIds.length === 0) {
       return null;
     }
-    if ((room.turnMeldedCards?.get(playerId) || []).length > 0) return null;
-    // A taken card that left the hand other than by this discard was melded.
-    // Covered by the ledger above; kept for a room restored without one.
-    const discardedId = this._cardId(discarded);
-    const inHand = new Set(
-      (room.playerHands.get(playerId) || []).map((c) => String(this._cardId(c)))
-    );
-    const melded = take.cardIds.some(
-      (id) => String(id) !== String(discardedId) && !inHand.has(String(id))
-    );
-    if (melded) return null;
+    if (this._qanoonPileSettled(room, playerId, take, discarded)) return null;
 
     // A room restored from a snapshot older than the counter has none yet.
     if (!(room.qanoonChargeCounts instanceof Map)) room.qanoonChargeCounts = new Map();
@@ -382,7 +372,7 @@ class ActionHandlers {
     room.teamTurnPenalty.set(playerId, (room.teamTurnPenalty.get(playerId) || 0) + charge);
     const player = room.getPlayer(playerId);
     logger.info(
-      `[QANOON] ${playerId} took the pile and discarded without melding anything this turn — charge #${count}: ${charge}`
+      `[QANOON] ${playerId} discarded without melding a card from the pile taken this turn (or its twin) — charge #${count}: ${charge}`
     );
     return {
       value: -charge,
@@ -390,6 +380,44 @@ class ActionHandlers {
       playerIndex: player ? player.playerIndex : null,
       count,
     };
+  }
+
+  /**
+   * Whether this turn's melds settle a QANOON pile take: one of them holds a
+   * card with the rank AND suit of a taken card — the taken card itself, or the
+   * twin that was already in hand (owner: pile J♥ taken while holding J♥, "2 J,
+   * yang dimeld J yang ditangan" — no charge). Same rank in another suit is a
+   * different card and does not count; a 2 is matched like any other card.
+   *
+   * "Laid this turn" is turnMeldedCards, the turn's own ledger: an undo takes
+   * its cards back off it, so a meld laid and undone does not count, and every
+   * turn start empties it. The taken cards' faces are read off the cards
+   * themselves, wherever they are now: still in hand, in this turn's melds, or
+   * the card being thrown (melding the twin and throwing the taken copy is
+   * the same play as the other way round).
+   * @param {GameRoom} room
+   * @param {string} playerId
+   * @param {{cardIds: Array<string|number>}} take
+   * @param {Object} discarded - the card that just left the hand
+   * @returns {boolean}
+   */
+  static _qanoonPileSettled(room, playerId, take, discarded) {
+    const takenIds = new Set(take.cardIds.map(String));
+    const hand = room.playerHands.get(playerId) || [];
+    const laid = room.turnMeldedCards?.get(playerId) || [];
+    // A taken card that left the hand other than by this discard was melded.
+    // Covered by the ledger below; kept for a room restored without one.
+    const discardedId = String(this._cardId(discarded));
+    const inHand = new Set(hand.map((c) => String(this._cardId(c))));
+    if ([...takenIds].some((id) => id !== discardedId && !inHand.has(id))) return true;
+
+    const face = (c) => `${c.suit}|${c.rank}`;
+    const takenFaces = new Set(
+      [...hand, ...laid, discarded]
+        .filter((c) => c && takenIds.has(String(this._cardId(c))))
+        .map(face)
+    );
+    return laid.some((c) => c && takenFaces.has(face(c)));
   }
 
   /**

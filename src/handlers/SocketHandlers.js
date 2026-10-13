@@ -1409,9 +1409,10 @@ class SocketHandlers {
       professionalWellMode: room.professionalWellMode,
       qanoon: room.isQanoon?.() === true,
       // QANOON rule 2 obligation of the turn in progress: which cards came off
-      // the pile. Any meld of the turn settles it; the server decides
-      // (ActionHandlers._applyQanoonPileCharge). Cards the pile held were
-      // face-up to the whole table, so nothing private leaks.
+      // the pile. A meld holding one of them — or its twin from the hand —
+      // settles it; the server decides (ActionHandlers._applyQanoonPileCharge).
+      // Cards the pile held were face-up to the whole table, so nothing private
+      // leaks.
       qanoonPileTake: room.isQanoon?.() === true && room.qanoonPileTake
         ? {
           playerIndex: room.getPlayer(room.qanoonPileTake.playerId)?.playerIndex ?? null,
@@ -9699,8 +9700,9 @@ class SocketHandlers {
         }
       }
 
-      // QANOON rule 2: remember this take; the discard that ends the turn is
-      // charged unless the turn melded something (any cards, new meld or add).
+      // QANOON rule 2: remember every card this take brought in; the discard
+      // that ends the turn is charged unless one of them — or its twin from the
+      // hand, same rank and suit — reached a meld.
       room.qanoonPileTake = room.isQanoon()
         ? {
           playerId,

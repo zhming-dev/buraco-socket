@@ -7,8 +7,10 @@
  *   2. Taking the discard pile obliges the taker to put at least ONE of the taken
  *      cards into a meld before discarding. Forgetting is not blocked; it costs
  *      the side 100 on the round.
- *      Relaxed 2026-10-10: ANY meld of the turn settles it — a new meld or an
- *      add, of any cards. Only a take followed by a turn that lays nothing pays.
+ *      2026-10-10 relaxed it to "any meld of the turn"; 2026-10-13 withdrew
+ *      that: the meld must hold a taken card again — or its TWIN, the same
+ *      rank and suit already in hand (the shoe is two decks, the copies look
+ *      the same).
  *   3. Everything else is pro-direct.
  */
 /* eslint-env mocha */
@@ -160,7 +162,7 @@ describe('#qanoon', () => {
     });
   });
 
-  describe('rule 2 — a pile take must be followed by a meld', () => {
+  describe('rule 2 — a pile take must reach a meld (a taken card, or its twin)', () => {
     /**
      * p1 has just taken a 2-card pile [7♥, 8♥]; hand also holds 5♥ 6♥ + junk
      * and a club run 9♣ 10♣ J♣ none of the taken cards belongs to.
@@ -204,52 +206,118 @@ describe('#qanoon', () => {
       expect(room.teamTurnPenalty.get('p1')).to.equal(0);
     });
 
-    // Owner, 2026-10-10: "bisa ambil kartu di discarded dan ngemeld apapun
-    // (meld atau add to meld), dan ga bakal kena minus".
+    // Owner, 2026-10-13: the 2026-10-10 relaxation ("ngemeld apapun ... ga
+    // bakal kena minus") is withdrawn — a meld that holds neither a taken card
+    // nor a twin of one is charged again.
     const clubsRun = (room) => room.playerHands.get('p1').filter((x) => x.suit === 'clubs' && x.rank !== 'K');
     const junkK = (room) => room.playerHands.get('p1').find((x) => x.rank === 'K');
 
-    it('no charge when the turn lays a new meld of cards that did NOT come off the pile', () => {
-      const { room, taken } = tookPile();
+    it('charges when the turn lays a new meld of cards that did NOT come off the pile', () => {
+      const { room } = tookPile();
       const laid = ActionHandlers.handlePlayMeld(room, 'p1', clubsRun(room));
       expect(laid.success, laid.error).to.equal(true);
-      // Both taken cards are still in hand — that no longer matters.
-      const handIds = room.playerHands.get('p1').map((x) => String(x.cardId));
-      expect(taken.every((t) => handIds.includes(String(t.cardId)))).to.equal(true);
-      const res = ActionHandlers.handleDiscard(room, 'p1', junkK(room));
-      expect(res.success, res.error).to.equal(true);
-      expect(res.broadcast.qanoonPenalty).to.equal(undefined);
-      expect(room.teamTurnPenalty.get('p1')).to.equal(0);
-      expect(room.qanoonChargeCounts.get('p1') || 0).to.equal(0);
-    });
-
-    it('no charge when the turn only ADDS a non-pile card to a meld already on the table', () => {
-      const { room } = tookPile();
-      room.playerMelds.set('p1', [run('diamonds', ['4', '5', '6'])]);
-      const seven = c('7', 'diamonds');
-      room.playerHands.get('p1').push(seven);
-      const added = ActionHandlers.handleAddToMeld(room, 'p1', [seven], 0, 0);
-      expect(added.success, added.error).to.equal(true);
-      const res = ActionHandlers.handleDiscard(room, 'p1', junkK(room));
-      expect(res.success, res.error).to.equal(true);
-      expect(res.broadcast.qanoonPenalty).to.equal(undefined);
-      expect(room.teamTurnPenalty.get('p1')).to.equal(0);
-    });
-
-    it('a meld laid and then UNDONE does not count', () => {
-      const { room } = tookPile();
-      expect(ActionHandlers.handlePlayMeld(room, 'p1', clubsRun(room)).success).to.equal(true);
-      const undo = ActionHandlers.handleUndoMeld(room, 'p1');
-      expect(undo.success, undo.error).to.equal(true);
       const res = ActionHandlers.handleDiscard(room, 'p1', junkK(room));
       expect(res.success, res.error).to.equal(true);
       expect(res.broadcast.qanoonPenalty).to.include({ value: -100, count: 1 });
       expect(room.teamTurnPenalty.get('p1')).to.equal(100);
     });
 
-    it("a meld from the seat's PREVIOUS turn does not cover this turn's take", () => {
+    it('charges when the turn only ADDS a non-pile card — same rank, other suit is no twin', () => {
       const { room } = tookPile();
-      // Turn 1: no take, a meld, a discard.
+      room.playerMelds.set('p1', [run('diamonds', ['4', '5', '6'])]);
+      const seven = c('7', 'diamonds'); // a 7 like the taken 7♥, but a diamond
+      room.playerHands.get('p1').push(seven);
+      const added = ActionHandlers.handleAddToMeld(room, 'p1', [seven], 0, 0);
+      expect(added.success, added.error).to.equal(true);
+      const res = ActionHandlers.handleDiscard(room, 'p1', junkK(room));
+      expect(res.success, res.error).to.equal(true);
+      expect(res.broadcast.qanoonPenalty).to.include({ value: -100, count: 1 });
+    });
+
+    /**
+     * The owner's case (2026-10-13): the pile was A♥ J♥ K♥ and the hand already
+     * held 10♥ J♥ Q♥ — two J♥ in hand now, one from each deck.
+     */
+    const tookTwinPile = () => {
+      const room = makeRoom();
+      const taken = [c('A', 'hearts'), c('J', 'hearts'), c('K', 'hearts')];
+      const own = [c('10', 'hearts'), c('J', 'hearts'), c('Q', 'hearts')];
+      const junk = [c('4', 'clubs'), c('9', 'diamonds')];
+      room.playerHands.set('p1', [...own, ...junk, ...taken]);
+      room.qanoonPileTake = { playerId: 'p1', cardIds: taken.map((t) => String(t.cardId)) };
+      return { room, taken, own, junk };
+    };
+
+    it('no charge when the meld holds the TWIN of a taken card instead of the taken copy', () => {
+      const { room, taken, own, junk } = tookTwinPile();
+      const laid = ActionHandlers.handlePlayMeld(room, 'p1', own); // 10♥ J♥ Q♥, the J♥ from the hand
+      expect(laid.success, laid.error).to.equal(true);
+      // Every taken card, the pile's J♥ included, is still in hand.
+      const handIds = room.playerHands.get('p1').map((x) => String(x.cardId));
+      expect(taken.every((t) => handIds.includes(String(t.cardId)))).to.equal(true);
+      const res = ActionHandlers.handleDiscard(room, 'p1', junk[0]);
+      expect(res.success, res.error).to.equal(true);
+      expect(res.broadcast.qanoonPenalty).to.equal(undefined);
+      expect(room.teamTurnPenalty.get('p1')).to.equal(0);
+      expect(room.qanoonChargeCounts.get('p1') || 0).to.equal(0);
+    });
+
+    it('no charge when the twin is ADDED to a meld already on the table', () => {
+      const { room, own, junk } = tookTwinPile();
+      room.playerMelds.set('p1', [run('hearts', ['8', '9', '10'])]);
+      const added = ActionHandlers.handleAddToMeld(room, 'p1', [own[1]], 0, 0); // the hand's J♥
+      expect(added.success, added.error).to.equal(true);
+      const res = ActionHandlers.handleDiscard(room, 'p1', junk[0]);
+      expect(res.success, res.error).to.equal(true);
+      expect(res.broadcast.qanoonPenalty).to.equal(undefined);
+    });
+
+    it('melding the twin and throwing the taken copy is the same play as the other way round', () => {
+      const { room, taken, own } = tookTwinPile();
+      expect(ActionHandlers.handlePlayMeld(room, 'p1', own).success).to.equal(true);
+      const res = ActionHandlers.handleDiscard(room, 'p1', taken[1]); // the pile's J♥ goes back
+      expect(res.success, res.error).to.equal(true);
+      expect(res.broadcast.qanoonPenalty).to.equal(undefined);
+    });
+
+    it('the same rank in another suit is not a twin', () => {
+      const { room, junk } = tookTwinPile();
+      const spades = [c('10', 'spades'), c('J', 'spades'), c('Q', 'spades')];
+      room.playerHands.get('p1').push(...spades);
+      expect(ActionHandlers.handlePlayMeld(room, 'p1', spades).success).to.equal(true);
+      const res = ActionHandlers.handleDiscard(room, 'p1', junk[0]);
+      expect(res.success, res.error).to.equal(true);
+      expect(res.broadcast.qanoonPenalty).to.include({ value: -100, count: 1 });
+    });
+
+    it("a 2's twin counts like any other card's", () => {
+      const room = makeRoom();
+      const taken = [c('2', 'clubs'), c('K', 'spades')];
+      const hearts = [c('5', 'hearts'), c('6', 'hearts'), c('2', 'clubs')]; // the hand's 2♣ stands in for the 7♥
+      const junk = c('9', 'diamonds');
+      room.playerHands.set('p1', [...hearts, junk, ...taken]);
+      room.qanoonPileTake = { playerId: 'p1', cardIds: taken.map((t) => String(t.cardId)) };
+      const laid = ActionHandlers.handlePlayMeld(room, 'p1', hearts);
+      expect(laid.success, laid.error).to.equal(true);
+      const res = ActionHandlers.handleDiscard(room, 'p1', junk);
+      expect(res.success, res.error).to.equal(true);
+      expect(res.broadcast.qanoonPenalty).to.equal(undefined);
+    });
+
+    it('a twin meld laid and then UNDONE does not count', () => {
+      const { room, own, junk } = tookTwinPile();
+      expect(ActionHandlers.handlePlayMeld(room, 'p1', own).success).to.equal(true);
+      const undo = ActionHandlers.handleUndoMeld(room, 'p1');
+      expect(undo.success, undo.error).to.equal(true);
+      const res = ActionHandlers.handleDiscard(room, 'p1', junk[0]);
+      expect(res.success, res.error).to.equal(true);
+      expect(res.broadcast.qanoonPenalty).to.include({ value: -100, count: 1 });
+      expect(room.teamTurnPenalty.get('p1')).to.equal(100);
+    });
+
+    it("a twin laid on the seat's PREVIOUS turn does not cover this turn's take", () => {
+      const { room } = tookPile();
+      // Turn 1: no take, the club run 9♣ 10♣ J♣ goes down, a discard.
       room.qanoonPileTake = null;
       expect(ActionHandlers.handlePlayMeld(room, 'p1', clubsRun(room)).success).to.equal(true);
       expect(ActionHandlers.handleDiscard(room, 'p1', room.playerHands.get('p1').find((x) => x.rank === 'J')).success)
@@ -258,14 +326,45 @@ describe('#qanoon', () => {
       room.playerHands.set('p2', [c('3', 'spades'), c('4', 'clubs')]);
       room.hasDrawnCard = true;
       expect(ActionHandlers.handleDiscard(room, 'p2', room.playerHands.get('p2')[0]).success).to.equal(true);
-      // Turn 2: p1 takes the pile and lays nothing.
-      const taken = [c('Q', 'spades'), c('Q', 'hearts')];
+      // Turn 2: p1 takes a pile holding the twin of last turn's 10♣ and lays nothing.
+      const taken = [c('10', 'clubs'), c('Q', 'hearts')];
       room.playerHands.get('p1').push(...taken);
       room.qanoonPileTake = { playerId: 'p1', cardIds: taken.map((t) => String(t.cardId)) };
       room.hasDrawnCard = true;
       const res = ActionHandlers.handleDiscard(room, 'p1', junkK(room));
       expect(res.success, res.error).to.equal(true);
       expect(res.broadcast.qanoonPenalty).to.include({ value: -100, count: 1 });
+    });
+
+    it('a server restart mid-turn keeps the twin meld counted', async () => {
+      const { room, own, junk } = tookTwinPile();
+      expect(ActionHandlers.handlePlayMeld(room, 'p1', own).success).to.equal(true);
+      let persisted = null;
+      const noop = () => {};
+      const manager = new FailureManager(
+        null,
+        { setex: (key, ttl, json) => { persisted = json; } },
+        null,
+        { debug: noop, info: noop, warn: noop, error: noop }
+      );
+      await manager.persistGameState(room);
+      const rebuilt = manager._reconstructGameRoom(JSON.parse(persisted));
+      // The take and the variant came back, so the judge really runs below.
+      expect(rebuilt.isQanoon()).to.equal(true);
+      expect(rebuilt.qanoonPileTake.cardIds).to.have.length(3);
+      const thrown = rebuilt.playerHands.get('p1').find((x) => String(x.cardId) === String(junk[0].cardId));
+      const res = ActionHandlers.handleDiscard(rebuilt, 'p1', thrown);
+      expect(res.success, res.error).to.equal(true);
+      expect(res.broadcast.qanoonPenalty).to.equal(undefined);
+    });
+
+    it('a room restored with an empty turn ledger still sees the taken card that left the hand', () => {
+      const { room, hand } = tookPile();
+      expect(ActionHandlers.handlePlayMeld(room, 'p1', [hand[0], hand[1], hand[4]]).success).to.equal(true);
+      room.turnMeldedCards = new Map(); // a snapshot from before the ledger was persisted
+      const res = ActionHandlers.handleDiscard(room, 'p1', junkK(room));
+      expect(res.success, res.error).to.equal(true);
+      expect(res.broadcast.qanoonPenalty).to.equal(undefined);
     });
 
     it('throwing a taken card away does not count as melding it', () => {
