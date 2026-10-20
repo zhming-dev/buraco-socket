@@ -1287,20 +1287,22 @@
     A.api.get('settings').then(
       function (res) {
         var n = res && res.data ? Number(res.data.collusion_streak_threshold) : NaN;
-        paintThreshold(Number.isFinite(n) && n > 0 ? n : null);
+        paintThreshold(Number.isFinite(n) && n > 0 ? n : null, false);
       },
       function () {
-        paintThreshold(null);
+        paintThreshold(null, true);
       }
     );
   }
 
-  function paintThreshold(n) {
+  function paintThreshold(n, failed) {
     if (!ui.streakN) return;
     ui.streakN.textContent = n ? String(n) : 'several';
     ui.streakN.title = n
       ? 'Set under Settings → Fair play'
-      : 'This wlive-api does not report the setting (it predates it; its built-in value is 5)';
+      : failed
+        ? 'Could not read the setting from wlive-api'
+        : 'This wlive-api does not report the setting (it predates it; its built-in value is 5)';
   }
 
   A.registerPage('review', {

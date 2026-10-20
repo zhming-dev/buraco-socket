@@ -305,7 +305,7 @@
           control = h('div', { class: 'fp-window' }, input, h('span', { class: 'hint', text: 'hours' }), ui.windowChips);
         }
       }
-      ui.fields[k.key] = A.field(labelFor(k, d), control, { hint: fieldHint(k, d) });
+      ui.fields[k.key] = A.field(labelFor(k, d), control, { hint: fieldHint(k, d), lbl: true });
       grid.appendChild(ui.fields[k.key].root);
     });
     wrap.appendChild(grid);
@@ -325,7 +325,7 @@
       if (st.error.status === 404 || st.error.status === 405) {
         box.appendChild(
           A.stateBox({
-            icon: '🧩',
+            icon: 'plug',
             title: 'This wlive-api has no Buraco settings endpoint yet',
             text:
               'GET /api/buraco/admin/settings answered ' +
@@ -359,7 +359,7 @@
         sync(k.key);
       };
       ui.inputs[k.key] = input;
-      ui.fields[k.key] = A.field(labelFor(k, d), input, { hint: fieldHint(k, d) });
+      ui.fields[k.key] = A.field(labelFor(k, d), input, { hint: fieldHint(k, d), lbl: true });
       grid.appendChild(ui.fields[k.key].root);
     });
     card.appendChild(grid);

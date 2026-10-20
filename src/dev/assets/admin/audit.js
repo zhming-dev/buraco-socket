@@ -62,7 +62,11 @@
     mode: '2v2',
     only: 'all',
     user: '',
+    // 'id' when the player came from a link here (a database id); '' when
+    // typed, which the API reads as a WLive ID first.
+    by: '',
     page: 1,
+    pushedGame: false,
     list: null,
     error: null,
     gameId: null,
@@ -221,6 +225,7 @@
       return;
     }
     st.user = v;
+    st.by = '';
     st.page = 1;
     loadList();
   }
@@ -242,6 +247,7 @@
           on: {
             click: function () {
               st.user = '';
+              st.by = '';
               ui.search.value = '';
               st.page = 1;
               loadList();
@@ -259,22 +265,23 @@
     st.error = null;
     renderList();
     ui.refresh.disabled = true;
-    var asked = [st.mode, st.only, st.user, st.page].join('|');
+    var asked = [st.mode, st.only, st.user, st.by, st.page].join('|');
     A.api
       .get('audit/games', {
         mode: st.mode,
         only: st.only === 'flagged' ? 'flagged' : null,
         user: st.user || null,
+        by: st.user && st.by ? st.by : null,
         page: st.page,
         per_page: PER_PAGE,
       })
       .then(
         function (res) {
-          if (asked !== [st.mode, st.only, st.user, st.page].join('|')) return;
+          if (asked !== [st.mode, st.only, st.user, st.by, st.page].join('|')) return;
           st.list = res.data && typeof res.data === 'object' ? res.data : { games: [] };
         },
         function (err) {
-          if (asked !== [st.mode, st.only, st.user, st.page].join('|')) return;
+          if (asked !== [st.mode, st.only, st.user, st.by, st.page].join('|')) return;
           st.error = err;
         }
       )
@@ -309,6 +316,14 @@
       return;
     }
     var games = st.list.games || [];
+    var total = Number(st.list.total) || 0;
+    var lastPage = Math.max(1, Math.ceil(total / (Number(st.list.per_page) || PER_PAGE)));
+    if (!games.length && total > 0 && st.page > lastPage) {
+      // The list shrank under this page (a flag dismissed, a game re-scored).
+      st.page = lastPage;
+      loadList();
+      return;
+    }
     if (!games.length) {
       box.appendChild(
         A.stateBox({
@@ -497,15 +512,31 @@
   function openGame(id, fromHash) {
     st.gameId = Number(id);
     var hash = '#/audit/' + st.gameId;
-    if (!fromHash && location.hash !== hash && history.pushState) history.pushState(null, '', hash);
+    st.pushedGame = false;
+    if (!fromHash && location.hash !== hash && history.pushState) {
+      history.pushState(null, '', hash);
+      st.pushedGame = true;
+    }
     ui.listView.hidden = true;
     ui.detailView.hidden = false;
     window.scrollTo(0, 0);
     loadGame(st.gameId);
   }
 
+  // "All games" undoes the history entry that opening the game made, so a Back
+  // after it does not land on the same list a second time.
+  function leaveGame() {
+    if (st.pushedGame) {
+      st.pushedGame = false;
+      history.back();
+      return;
+    }
+    closeGame();
+  }
+
   function closeGame() {
     st.gameId = null;
+    st.pushedGame = false;
     st.detail = null;
     st.detailError = null;
     setHash(null);
@@ -521,14 +552,14 @@
     ui.refresh.disabled = true;
     A.api.get('audit/games/' + encodeURIComponent(id)).then(
       function (res) {
-        if (st.gameId !== id) return;
         ui.refresh.disabled = false;
+        if (st.gameId !== id) return;
         st.detail = res.data || null;
         renderGame();
       },
       function (err) {
-        if (st.gameId !== id) return;
         ui.refresh.disabled = false;
+        if (st.gameId !== id) return;
         st.detailError = err;
         renderGame();
       }
@@ -539,7 +570,7 @@
     var box = A.clear(ui.detailView);
     var back = h('button', {
       class: 'small',
-      on: { click: closeGame },
+      on: { click: leaveGame },
     }, A.icon('arrow-left'), ' All games');
     box.appendChild(h('div', { class: 'audit-back' }, back));
     if (st.detailError) {
@@ -575,9 +606,15 @@
     replay.onclick = function () {
       A.busy(replay, 'Looking…', function () {
         return findReplay(g);
-      }).catch(function (e) {
-        A.toastError('Replay', e);
-      });
+      })
+        .catch(function (e) {
+          A.toastError('Replay', e);
+        })
+        .then(function () {
+          // busy() puts the text back, not the icon.
+          A.clear(replay).appendChild(A.icon('play'));
+          replay.appendChild(document.createTextNode(' Replay'));
+        });
     };
     var verdict;
     if (!g.audited) {
@@ -836,16 +873,29 @@
         return;
       }
       seen.forEach(function (n, i) {
+        // Neighbours are the OTHER players seen on it in the last 30 days (the
+        // API leaves this table out): nb.users is capped, nb.players counts all.
         var nb = neighbours[n.network] || { players: 0, users: [] };
         var others = (nb.users || []).filter(function (x) {
           return x.user && !here[String(x.user.id)];
         });
-        var mates = (nb.users || []).filter(function (x) {
-          return x.user && here[String(x.user.id)] && String(x.user.id) !== id;
-        });
-        // nb.users is capped by the API; nb.players is everyone seen on it.
-        var atTable = (nb.users || []).length - others.length;
-        var more = Math.max(others.length, (Number(nb.players) || 0) - atTable) - Math.min(6, others.length);
+        var more = Math.max(others.length, Number(nb.players) || 0) - Math.min(6, others.length);
+        // Who at THIS table shared it while the table was live: the game's own
+        // audit, never today's neighbours (those move on).
+        var mates = n.shared
+          ? []
+          : Object.keys(who)
+              .filter(function (otherId) {
+                return (
+                  otherId !== id &&
+                  (networks[otherId] || []).some(function (m) {
+                    return m.network === n.network && !m.shared;
+                  })
+                );
+              })
+              .map(function (otherId) {
+                return { user: who[otherId] };
+              });
         tbody.appendChild(
           h(
             'tr',
@@ -954,7 +1004,7 @@
             h(
               'tr',
               null,
-              ['Pair', 'Here', 'As partners', 'Head-to-head', 'Streak', 'Pair'].map(function (t) {
+              ['Pair', 'Here', 'As partners', 'Head-to-head', 'Streak', 'Status'].map(function (t) {
                 return h('th', { text: t });
               })
             )
@@ -1004,10 +1054,13 @@
         click: function () {
           m.close();
           st.user = String(u.id);
+          st.by = 'id';
           ui.search.value = st.user;
           st.page = 1;
           st.only = 'all';
           ui.only.set('all');
+          st.mode = 'all';
+          ui.mode.set('all');
           if (st.gameId != null) closeGame();
           loadList();
         },
@@ -1020,10 +1073,17 @@
       body: body,
       foot: [h('div', { class: 'spacer' }), showGames, h('button', { text: 'Close', on: { click: function () { m.close(); } } })],
     });
-    A.api.get('audit/users/' + encodeURIComponent(u.id) + '/networks').then(
+    A.api.get('audit/users/' + encodeURIComponent(u.id) + '/networks', { by: 'id' }).then(
       function (res) {
         A.clear(body);
         var d = res.data || {};
+        if (d.user && String(d.user.id) !== String(u.id)) {
+          // An API without by=id read the number as a WLive ID: someone else.
+          body.appendChild(
+            h('div', { class: 'form-error', text: 'wlive-api answered for another player (#' + d.user.id + '): update it to a build that knows by=id.' })
+          );
+          return;
+        }
         var list = d.networks || [];
         if (!list.length) {
           body.appendChild(h('div', { class: 'hint', text: 'No public address recorded for this player.' }));
@@ -1077,8 +1137,11 @@
                             others.map(function (x) {
                               return h('span', { class: 'nchip', text: nameOf(x.user), title: chipTitle(x.user) });
                             }),
-                            (nb[n.network] || {}).players - 1 > others.length
-                              ? h('span', { class: 'hint', text: '+' + ((nb[n.network] || {}).players - 1 - others.length) + ' more' })
+                            (Number((nb[n.network] || {}).players) || 0) > others.length
+                              ? h('span', {
+                                  class: 'hint',
+                                  text: '+' + ((Number((nb[n.network] || {}).players) || 0) - others.length) + ' more',
+                                })
                               : null
                           )
                         : h('span', { class: 'hint', text: 'nobody else' })

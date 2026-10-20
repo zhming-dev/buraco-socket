@@ -2972,11 +2972,13 @@
     if (location.hash !== hash && history.replaceState) history.replaceState(null, '', hash);
   }
 
-  function showSection(name) {
+  // [sub] is the rest of an admin page's link (#/audit/<id>): it stays in the
+  // URL so the page can open what the link names.
+  function showSection(name, sub) {
     if (!TABLE_SECTIONS[name] && !ADMIN_SECTIONS[name]) name = 'live';
     var wasTables = inTables();
     var from = section;
-    markSection(name);
+    markSection(name, ADMIN_SECTIONS[name] ? sub : null);
     var tables = !!TABLE_SECTIONS[name];
     $('tables-view').hidden = !tables;
     $('admin-pages').hidden = tables;
@@ -3025,7 +3027,9 @@
   function routeFromHash() {
     var parts = String(location.hash || '').replace(/^#\/?/, '').split('/');
     var name = parts[0] || 'live';
-    showSection(name);
+    var sub = null;
+    try { sub = parts[1] ? decodeURIComponent(parts[1]) : null; } catch (e) { sub = null; }
+    showSection(name, sub);
     if (name === 'replays' && parts[1] && secret) openReplay(decodeURIComponent(parts[1]));
   }
 

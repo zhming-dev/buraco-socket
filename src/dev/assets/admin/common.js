@@ -728,7 +728,9 @@
       'div',
       { class: 'fld' + (opts.wide ? ' wide' : '') },
       label
-        ? h('label', null, label, opts.required ? h('span', { class: 'req', text: '*' }) : null)
+        ? // opts.lbl: a plain label row. A <label> hands every click on it to the
+          // first control inside, e.g. a "Use default" button next to the name.
+          h(opts.lbl ? 'div' : 'label', opts.lbl ? { class: 'lbl' } : null, label, opts.required ? h('span', { class: 'req', text: '*' }) : null)
         : null,
       control,
       hint,

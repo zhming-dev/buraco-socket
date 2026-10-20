@@ -520,6 +520,12 @@ describe('dev console admin proxy (/dev/api/admin → wlive-api /api/buraco/admi
       const r2 = await call('/dev/api/admin/settings', { method: 'PATCH' });
       expect(r2.status).to.equal(405);
       expect(r2.headers.allow).to.equal('GET, PUT');
+      // The audit is read-only.
+      for (const method of ['POST', 'PUT', 'DELETE']) {
+        const r3 = await call('/dev/api/admin/audit/games/88', { method });
+        expect(r3.status, method).to.equal(405);
+        expect(r3.headers.allow).to.equal('GET');
+      }
       expect(upstream.seen).to.have.length(0);
     });
 
