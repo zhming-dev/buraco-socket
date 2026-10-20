@@ -389,7 +389,7 @@
   .rb-event .fan { display: inline-flex; gap: 2px; vertical-align: middle; }
   .rb-event .seq { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 </style>
-<!-- Section nav + the Buraco admin pages (Overrides, Skins, Stickers, Review, Settings) -->
+<!-- Section nav + the Buraco admin pages (Overrides, Skins, Stickers, Review, Audit, Settings) -->
 <link rel="stylesheet" href="/dev/assets/admin/admin.css">
 </head>
 <body>
@@ -416,6 +416,7 @@
       <a href="#/skins" data-section="skins">Skins</a>
       <a href="#/stickers" data-section="stickers">Stickers</a>
       <a href="#/review" data-section="review">Review <span class="nav-count" id="review-count"></span></a>
+      <a href="#/audit" data-section="audit">Audit</a>
       <a href="#/settings" data-section="settings">Settings</a>
     </div>
     <div class="spacer"></div>
@@ -2950,11 +2951,11 @@
   //
   // Live rooms / Replays / Logs configure the table view above (which sidebar
   // list leads, which workspace tab). Overrides / Skins / Stickers / Review /
-  // Settings are the Buraco admin pages: /dev/assets/admin/*.js render them
+  // Audit / Settings are the Buraco admin pages: /dev/assets/admin/*.js render them
   // into #admin-pages and reach this page through window.DevConsole.
 
   var TABLE_SECTIONS = { live: 1, replays: 1, logs: 1 };
-  var ADMIN_SECTIONS = { overrides: 1, skins: 1, stickers: 1, review: 1, settings: 1 };
+  var ADMIN_SECTIONS = { overrides: 1, skins: 1, stickers: 1, review: 1, audit: 1, settings: 1 };
   var section = 'live';
   var connectHooks = [];
 
@@ -3102,6 +3103,7 @@
 <script src="/dev/assets/admin/skins.js"></script>
 <script src="/dev/assets/admin/stickers.js"></script>
 <script src="/dev/assets/admin/review.js"></script>
+<script src="/dev/assets/admin/audit.js"></script>
 <script src="/dev/assets/admin/settings.js"></script>
 </body>
 </html>

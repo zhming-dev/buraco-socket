@@ -497,6 +497,10 @@ describe('dev console admin proxy (/dev/api/admin → wlive-api /api/buraco/admi
         ['GET', '/dev/api/admin/ROOMS'],
         ['GET', '/dev/api/admin/webhooks/game-result'],
         ['GET', '/dev/api/admin'],
+        ['GET', '/dev/api/admin/audit/games/'],
+        ['GET', '/dev/api/admin/audit/games/abc'],
+        ['GET', '/dev/api/admin/audit/users/abc/networks'],
+        ['GET', '/dev/api/admin/audit/users/12/opponents'],
       ];
       for (const [method, path] of refused) {
         const r = await call(path, { method });
@@ -542,6 +546,9 @@ describe('dev console admin proxy (/dev/api/admin → wlive-api /api/buraco/admi
         ['POST', 'collusion-flags/5/review'],
         ['GET', 'users/1234/opponents'],
         ['GET', 'leaderboard'],
+        ['GET', 'audit/games'],
+        ['GET', 'audit/games/88'],
+        ['GET', 'audit/users/12345678/networks'],
         ['GET', 'settings'],
         ['PUT', 'settings'],
       ];

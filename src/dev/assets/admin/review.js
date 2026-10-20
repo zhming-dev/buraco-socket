@@ -4,10 +4,11 @@
 /**
  * Review — the leaderboard's anti-collusion guard ("under review" games).
  *
- * When the same player beats the same opponent 5 games in a row (wlive-api
- * LeaderboardService, `collusion_streak_threshold`), the pair is flagged: the
- * streak's points are reversed for both, and further games between the two
- * count for nothing until an admin decides:
+ * When the same player beats the same opponent `collusion_streak_threshold`
+ * games in a row (wlive-api LeaderboardService; an admin setting under
+ * Settings → Fair play, 5 by default — the page reads the live value), the pair
+ * is flagged: the streak's points are reversed for both, and further games
+ * between the two count for nothing until an admin decides:
  *   - dismiss  → every voided point is restored and the pair counts again
  *                (streak reset);
  *   - confirm  → the points stay voided and the pair stays frozen.
@@ -120,10 +121,15 @@
         },
       },
     });
+    ui.streakN = h('b', { text: '…' });
     root.appendChild(
       A.pageHead(
         'Review',
-        "Leaderboard anti-collusion. When the same player beats the same opponent 5 games in a row, the pair is flagged: the streak's points are voided and their games stop counting until you decide.",
+        [
+          'Leaderboard anti-collusion. When the same player beats the same opponent ',
+          ui.streakN,
+          " games in a row, the pair is flagged: the streak's points are voided and their games stop counting until you decide.",
+        ],
         [ui.refresh]
       )
     );
@@ -209,7 +215,7 @@
     if (!st.flags.length) {
       box.appendChild(
         A.stateBox({
-          icon: st.filter === 'open' ? '✅' : '🗂',
+          icon: st.filter === 'open' ? 'check' : 'inbox',
           title: st.filter === 'open' ? 'Nothing under review' : 'No ' + st.filter + ' flags',
           text:
             st.filter === 'open'
@@ -1275,12 +1281,35 @@
     );
   }
 
+  // The streak length that raises a flag is an admin setting (Settings → Fair
+  // play): read the live value rather than a number written into this page.
+  function loadThreshold() {
+    A.api.get('settings').then(
+      function (res) {
+        var n = res && res.data ? Number(res.data.collusion_streak_threshold) : NaN;
+        paintThreshold(Number.isFinite(n) && n > 0 ? n : null);
+      },
+      function () {
+        paintThreshold(null);
+      }
+    );
+  }
+
+  function paintThreshold(n) {
+    if (!ui.streakN) return;
+    ui.streakN.textContent = n ? String(n) : 'several';
+    ui.streakN.title = n
+      ? 'Set under Settings → Fair play'
+      : 'This wlive-api does not report the setting (it predates it; its built-in value is 5)';
+  }
+
   A.registerPage('review', {
     mount: mount,
     show: function () {
       st.boards = {};
       st.opponents = {};
       loadList(!st.flags);
+      loadThreshold();
     },
   });
 

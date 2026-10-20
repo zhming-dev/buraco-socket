@@ -3,7 +3,7 @@
  * `${WLIVE_ADMIN_API_BASE}/api/buraco/admin/<path>` (wlive-api, Laravel).
  *
  * The Buraco admin pages of the dev console (Overrides, Skins, Stickers,
- * Review, Settings) talk to wlive-api's `buraco.admin-proxy` surface. That
+ * Review, Audit, Settings) talk to wlive-api's `buraco.admin-proxy` surface. That
  * surface is never browser-facing: it wants the shared `x-buraco-admin-secret`
  * (wlive-api BURACO_ADMIN_PROXY_SECRET) and `x-admin-actor` (who is acting).
  * This socket holds that secret; the browser only ever holds the dev console's
@@ -67,7 +67,12 @@ const ROUTES = [
   ['POST', /^collusion-flags\/\d{1,18}\/review$/],
   ['GET', /^users\/\d{1,18}\/opponents$/],
   ['GET', /^leaderboard$/],
-  // Buraco settings (bet limits, broadcast thresholds)
+  // Game audit: scored games + what the fair-play rules saw. A player is named
+  // by database id or WLive unique id (both digits).
+  ['GET', /^audit\/games$/],
+  ['GET', /^audit\/games\/\d{1,18}$/],
+  ['GET', /^audit\/users\/\d{1,20}\/networks$/],
+  // Buraco settings (bet limits, broadcast thresholds, fair-play rules)
   ['GET', /^settings$/],
   ['PUT', /^settings$/],
 ];
