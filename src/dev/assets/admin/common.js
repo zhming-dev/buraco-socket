@@ -252,7 +252,7 @@
       var input = h('input', {
         type: 'text',
         value: actor(),
-        placeholder: 'e.g. Nizwar',
+        placeholder: 'Your name',
         maxLength: 60,
         autocomplete: 'off',
         spellcheck: false,

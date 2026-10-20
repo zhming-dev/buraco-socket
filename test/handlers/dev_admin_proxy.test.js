@@ -164,7 +164,7 @@ describe('dev console admin proxy (/dev/api/admin → wlive-api /api/buraco/admi
   function call(path, opts = {}) {
     const headers = {
       'x-webhook-secret': DEV_SECRET,
-      'x-admin-actor': 'Nizwar',
+      'x-admin-actor': 'Ops Admin',
       ...(opts.headers || {}),
     };
     for (const k of Object.keys(headers)) if (headers[k] === undefined) delete headers[k];
@@ -619,11 +619,11 @@ describe('dev console admin proxy (/dev/api/admin → wlive-api /api/buraco/admi
   });
 
   it('sanitizes the actor to printable ASCII', () => {
-    expect(sanitizeActor('Nizwar')).to.equal('Nizwar');
+    expect(sanitizeActor('Ops Admin')).to.equal('Ops Admin');
     expect(sanitizeActor(' a\tb\r\nc ')).to.equal('a b c');
     expect(sanitizeActor('ops@wblue.id')).to.equal('ops@wblue.id');
     expect(sanitizeActor('x'.repeat(100))).to.have.length(48);
-    expect(sanitizeActor('نزار')).to.equal('');
+    expect(sanitizeActor('مرحبا')).to.equal('');
     expect(sanitizeActor(null)).to.equal('');
     expect(sanitizeActor({ toString: () => 'x' })).to.equal('');
   });
