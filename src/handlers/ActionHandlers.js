@@ -1350,6 +1350,8 @@ class ActionHandlers {
       const wellIndex = room.deadPiles.indexOf(nextPile);
       room.deck.cards.push(...nextPile);
       room.deck.shuffle();
+      // Its wilds (at most two, see WILD_DEAL) as far apart as everywhere else.
+      room.deck.spreadWilds();
       // EMPTY THE SLOT, do not drop it. See _emptyDeadPileSlot.
       this._emptyDeadPileSlot(room, nextPile);
       // Its own game event: the promoted well and the reshuffled stock land in

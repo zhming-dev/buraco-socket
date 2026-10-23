@@ -3,7 +3,7 @@
  * Represents a game room with players and state
  */
 
-const { Deck } = require('./Deck');
+const { Deck, WILD_DEAL } = require('./Deck');
 const { GameRoomStatus } = require('../constants');
 const GameValidator = require('../validators/GameValidator');
 const logger = require('../utils/logger');
@@ -669,20 +669,38 @@ class GameRoom {
       // Create and shuffle deck
       this.deck = new Deck({ includeJokers: this.ruleset === 'classic' });
       this.deck.shuffle();
-      
+
       // Deal 11 cards to each player
+      const hands = [];
       this.players.forEach((player) => {
-        const hand = this.deck.deal(11);
-        this.playerHands.set(player.playerId, hand);
-        logger.info(`[GameRoom.dealCards] Dealt ${hand.length} cards to player ${player.playerId} (index: ${player.playerIndex})`, { roomId: this.roomId });
+        hands.push({ player, cards: this.deck.deal(11) });
       });
-      
+
       // Create pozzetto (pot) - two 11-card piles.
       const pozzetto1 = this.deck.deal(11);
       const pozzetto2 = this.deck.deal(11);
+
+      // Wilds are dealt scarce (WILD_DEAL): the extras go back to the stock,
+      // which then spreads its wilds apart with a natural on top for the flip
+      // below.
+      this.deck.limitWilds([
+        ...hands.map(({ cards }) => ({
+          cards,
+          max: WILD_DEAL.handMax,
+          min: WILD_DEAL.handMin,
+        })),
+        { cards: pozzetto1, max: WILD_DEAL.pozzettoMax },
+        { cards: pozzetto2, max: WILD_DEAL.pozzettoMax },
+      ]);
+      this.deck.spreadWilds();
+
+      for (const { player, cards: hand } of hands) {
+        this.playerHands.set(player.playerId, hand);
+        logger.info(`[GameRoom.dealCards] Dealt ${hand.length} cards to player ${player.playerId} (index: ${player.playerIndex})`, { roomId: this.roomId });
+      }
       this.deadPiles = [pozzetto1, pozzetto2];
       this.pozzetto = pozzetto1; // Keep for backward compatibility.
-      
+
       // Flip first card to discard pile
       const firstCard = this.deck.draw();
       if (firstCard) {
@@ -772,8 +790,11 @@ class GameRoom {
     const turnDirection = 1;
 
     // Return all ceremony cards to the deck and reshuffle so nothing is consumed.
+    // The reshuffle would bunch the stock's wilds again, so they are spread out
+    // anew (see Deck.spreadWilds).
     for (const card of ceremonyCards) this.deck.cards.push(card);
     this.deck.shuffle();
+    this.deck.spreadWilds();
 
     this.currentTurn = winnerIndex;
     this.turnDirection = turnDirection;

@@ -5,6 +5,27 @@
 
 const crypto = require('crypto');
 
+/**
+ * Wild cards (every 2, and the joker on the rulesets that have one) are dealt
+ * SCARCE on purpose (owner, 2026-10-24: "tiap orang max 1 kartu wild card saat
+ * deal, di pozzetto masing2 max 2 wild card, trus di deck card itu menyesuaikan
+ * dan pastikan kartu wild berjarak jauh2"). A hand holds at most [handMax], a
+ * pozzetto at most [pozzettoMax]; every extra goes back to the stock, which then
+ * spreads its wilds out (see Deck.spreadWilds). [handMin] 1 would instead give
+ * every hand exactly one. The same limits apply to every seat, so no seat or
+ * team gains from them.
+ */
+const WILD_DEAL = Object.freeze({ handMax: 1, handMin: 0, pozzettoMax: 2 });
+
+/**
+ * A card that can stand in for another: any 2, and a joker.
+ * @param {Card} card
+ * @returns {boolean}
+ */
+function isWild(card) {
+  return card?.rank === '2' || card?.rank === 'joker';
+}
+
 class Card {
   constructor(suit, rank, cardId = null) {
     this.suit = suit; // 'hearts', 'diamonds', 'clubs', 'spades'
@@ -117,6 +138,79 @@ class Deck {
   }
 
   /**
+   * Holds each pile to its wild limits by trading cards with the stock (this
+   * deck): a wild over a pile's `max` swaps with a natural from a random place
+   * in the stock, and a pile under its `min` swaps a random natural of its own
+   * for a wild from the stock while the stock has one. Caps run first, for every
+   * pile, so the wilds they free are the ones a `min` can draw on. Pile sizes
+   * and the deck's card set never change.
+   * @param {{cards: Card[], max: number, min?: number}[]} piles
+   */
+  limitWilds(piles) {
+    const randomIndex = (cards, pred) => {
+      const at = [];
+      cards.forEach((card, i) => {
+        if (pred(card)) at.push(i);
+      });
+      return at.length === 0 ? -1 : at[crypto.randomInt(at.length)];
+    };
+    const trade = (pile, i, s) => {
+      [pile[i], this.cards[s]] = [this.cards[s], pile[i]];
+    };
+
+    for (const { cards, max } of piles) {
+      while (cards.filter(isWild).length > max) {
+        const s = randomIndex(this.cards, (c) => !isWild(c));
+        if (s < 0) break;
+        trade(cards, randomIndex(cards, isWild), s);
+      }
+    }
+    for (const { cards, min = 0 } of piles) {
+      while (cards.filter(isWild).length < min) {
+        const s = randomIndex(this.cards, isWild);
+        const i = randomIndex(cards, (c) => !isWild(c));
+        if (s < 0 || i < 0) break;
+        trade(cards, i, s);
+      }
+    }
+  }
+
+  /**
+   * Re-orders the deck so its wilds sit far apart. The deck is cut into as many
+   * equal stretches as it holds wilds and each wild lands at a random place in
+   * the middle third of its own stretch, so two wilds are always at least two
+   * thirds of a stretch apart (about 8 cards in a 1v1 stock) and never meet near
+   * a stretch boundary. The top card, which is the opening discard or the next
+   * draw, is always a natural. Naturals keep their shuffled order.
+   */
+  spreadWilds() {
+    const wilds = this.cards.filter(isWild);
+    const naturals = this.cards.filter((card) => !isWild(card));
+    if (wilds.length === 0 || naturals.length === 0) return;
+
+    const n = this.cards.length;
+    const k = wilds.length;
+    const stretch = n / k;
+    const slots = new Set();
+    let previous = 0; // index 0 stays a natural
+    for (let i = 0; i < k; i++) {
+      const lo = Math.ceil(i * stretch + stretch / 3);
+      const hi = Math.floor(i * stretch + (stretch * 2) / 3);
+      const at = hi > lo ? crypto.randomInt(lo, hi + 1) : lo;
+      // Pushed past the previous wild and kept clear of the end, so every wild
+      // gets its own slot even in a stock with almost no naturals left.
+      previous = Math.min(Math.max(at, previous + 1), n - (k - i));
+      slots.add(previous);
+    }
+
+    let w = 0;
+    let m = 0;
+    this.cards = Array.from({ length: n }, (_, i) =>
+      slots.has(i) ? wilds[w++] : naturals[m++]
+    );
+  }
+
+  /**
    * Deal a specified number of cards
    * @param {number} count
    * @returns {Card[]}
@@ -153,4 +247,4 @@ class Deck {
   }
 }
 
-module.exports = { Deck, Card };
+module.exports = { Deck, Card, WILD_DEAL, isWild };
