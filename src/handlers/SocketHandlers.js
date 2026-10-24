@@ -30,6 +30,18 @@ const ROOM_OWNER_ACTION_EVENT = '__brazilia_room_owner_action';
 // and never be persisted onto a seat (see _addSpectator / handleClaimSeat).
 const SPECTATOR_FALLBACK_NAME = 'Spectator';
 
+// presence_notice (see _announcePresence): somebody who leaves a seat or the
+// stands and is back within this window is the same visit — a dropped socket,
+// a resync, a watcher's lobby → board hop — not a new arrival.
+const PRESENCE_RETURN_GRACE_MS = 60 * 1000;
+// A room first seen younger than this is new, and its first people are
+// arrivals (the host is told "you joined"). An older one is a room this
+// process picked up (restart, rehydration): its people are already there.
+const PRESENCE_NEW_ROOM_MS = 30 * 1000;
+// After a process start every watcher of every restored table reconnects and
+// would read as new; nobody is announced for this long.
+const PRESENCE_STARTUP_QUIET_MS = 90 * 1000;
+
 // Display names are shown in every viewer's roster, so they are bounded like any
 // other user-supplied text that reaches other people's screens. Matches the cap
 // the chat sender resolver already applies.
@@ -139,6 +151,10 @@ class SocketHandlers {
     this.matchmakingQueue = matchmakingQueue;
     this.failureManager = failureManager;
     this.roomSpectators = new Map();
+    // roomId -> who the room's presence_notice last saw (see _announcePresence).
+    this.roomPresence = new Map();
+    this._presenceClock = () => Date.now();
+    this._presenceQuietUntil = this._presenceClock() + PRESENCE_STARTUP_QUIET_MS;
     // Admin-wide skin override: { skins, expiresAt, setBy, setAt } or null.
     this.globalSkinOverride = null;
     this._globalSkinOverrideTimer = null;
@@ -1143,6 +1159,7 @@ class SocketHandlers {
    * @param {string} roomId
    */
   _clearRoomSpectators(roomId) {
+    this.roomPresence.delete(roomId);
     const spectators = this.roomSpectators.get(roomId);
     if (!spectators) return;
     for (const socketId of spectators.keys()) {
@@ -1469,6 +1486,88 @@ class SocketHandlers {
     );
     this._queueSeatLayoutSync(room);
     this._persistLobbyRoster(room);
+    this._announcePresence(room.roomId);
+  }
+
+  /**
+   * "Abdulla joined the table" / "Abdulla is watching" for EVERYONE in the room
+   * — the seated players, the watchers and the newcomer themselves (owner,
+   * 2026-10-24: the broadcast is the server's, and the spectator receives it
+   * too). Clients turn it into a toast.
+   *
+   * Every seat and stands change ends in one of the two roster broadcasts
+   * (_broadcastLobbyPlayers, _broadcastSpectatorsChanged), so this runs after
+   * each of them and compares the room with what it last saw:
+   *  - a human id in a seat that was not seated → `seated: true` (a watcher
+   *    taking a seat counts: they joined the game);
+   *  - an id in the stands that was nowhere → `seated: false`.
+   * Not an arrival: bots; a seat swap (same set); an id back inside
+   * PRESENCE_RETURN_GRACE_MS (reconnect, resync, lobby → board hop); a player
+   * standing up; a second device of somebody already watching; anything in the
+   * first PRESENCE_STARTUP_QUIET_MS after a process start; the people of a
+   * room this process only picked up (older than PRESENCE_NEW_ROOM_MS).
+   * @param {string} roomId
+   */
+  _announcePresence(roomId) {
+    const room = this.gameService.getRoom(roomId);
+    if (!room || typeof room.getPlayers !== 'function') return;
+    const now = this._presenceClock();
+
+    const seated = new Map();
+    for (const p of room.getPlayers()) {
+      if (!p || p.isBot === true) continue;
+      seated.set(String(p.playerId), p.playerName || '');
+    }
+    const watching = new Map();
+    for (const s of (this.roomSpectators.get(roomId) || new Map()).values()) {
+      const id = String(s.spectatorId);
+      if (!seated.has(id) && !watching.has(id)) watching.set(id, s.spectatorName || '');
+    }
+
+    let state = this.roomPresence.get(roomId);
+    const firstSight = !state;
+    if (!state) {
+      state = {
+        seated: new Set(),
+        watching: new Set(),
+        departedSeated: new Map(),
+        departedWatching: new Map(),
+      };
+      this.roomPresence.set(roomId, state);
+    }
+    for (const departed of [state.departedSeated, state.departedWatching]) {
+      for (const [id, at] of departed) {
+        if (now - at > PRESENCE_RETURN_GRACE_MS) departed.delete(id);
+      }
+    }
+
+    const arrivals = [];
+    for (const [id, name] of seated) {
+      if (state.seated.has(id) || state.departedSeated.has(id)) continue;
+      arrivals.push({ playerId: id, playerName: name, seated: true });
+    }
+    for (const [id, name] of watching) {
+      if (state.watching.has(id) || state.seated.has(id)) continue;
+      if (state.departedWatching.has(id) || state.departedSeated.has(id)) continue;
+      arrivals.push({ playerId: id, playerName: name, seated: false });
+    }
+
+    for (const id of state.seated) if (!seated.has(id)) state.departedSeated.set(id, now);
+    for (const id of state.watching) if (!watching.has(id)) state.departedWatching.set(id, now);
+    for (const id of seated.keys()) state.departedSeated.delete(id);
+    for (const id of watching.keys()) state.departedWatching.delete(id);
+    state.seated = new Set(seated.keys());
+    state.watching = new Set(watching.keys());
+
+    if (arrivals.length === 0 || now < this._presenceQuietUntil) return;
+    if (firstSight) {
+      const age = typeof room.getRoomAge === 'function' ? room.getRoomAge() : Infinity;
+      if (!(age < PRESENCE_NEW_ROOM_MS)) return;
+    }
+    this.io.to(roomId).emit(SocketEvents.PRESENCE_NOTICE, {
+      arrivals,
+      timestamp: new Date(now).toISOString(),
+    });
   }
 
   _persistLobbyRoster(room) {
@@ -6589,6 +6688,7 @@ class SocketHandlers {
     // The lobby shows the watcher count too; it travels with the seat count.
     const room = this.gameService.getRoom(roomId);
     if (room) this._notifyBackendPlayerCount(roomId, room.players.size);
+    this._announcePresence(roomId);
   }
 
   _expireSwap(room, targetPlayerId) {

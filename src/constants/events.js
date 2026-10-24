@@ -40,6 +40,11 @@ const SocketEvents = {
   HOST_HEARTBEAT_PING: 'host_heartbeat_ping', // S → host socket: { roomId, seq, ts }
   HOST_HEARTBEAT_PONG: 'host_heartbeat_pong', // host → S: { roomId, seq }
   SPECTATORS_CHANGED: 'spectators_changed',
+  // S → the WHOLE room (players, watchers and the newcomer): somebody new sat
+  // down or started watching. { arrivals: [{ playerId, playerName, seated }],
+  // timestamp }. Never for a reconnect, a seat swap, a bot, or a watcher
+  // hopping from their lobby to their board. See _announcePresence.
+  PRESENCE_NOTICE: 'presence_notice',
   // Admin skin override (PTW skins-admin): the server decides which skins a
   // table shows. Effective skins = per-game override (dies with the room) →
   // global override (has an expiry) → the room owner's own skins → none (each
