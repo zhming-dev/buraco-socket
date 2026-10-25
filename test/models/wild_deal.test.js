@@ -1,6 +1,7 @@
 /**
- * Wild cards are dealt scarce (WILD_DEAL): at most one per hand, at most two
- * per pozzetto, and the stock keeps its wilds far apart with a natural on top.
+ * Wild cards are dealt scarce (WILD_DEAL): at most one per hand, at most one
+ * per 2v2 team, at most two per pozzetto, and the stock keeps its wilds far
+ * apart with a natural on top.
  */
 
 const { expect } = require('chai');
@@ -53,6 +54,13 @@ describe('Wild deal limits', () => {
             expect(hand).to.have.lengthOf(11);
             expect(wildsIn(hand)).to.be.at.most(WILD_DEAL.handMax);
             if (wildsIn(hand) > 0) handsWithAWild++;
+          }
+          if (players === 4) {
+            // Partners sit opposite: p0 + p2 against p1 + p3.
+            const team = (a, b) =>
+              wildsIn(room.playerHands.get(a)) + wildsIn(room.playerHands.get(b));
+            expect(team('p0', 'p2'), 'team A').to.be.at.most(WILD_DEAL.teamMax);
+            expect(team('p1', 'p3'), 'team B').to.be.at.most(WILD_DEAL.teamMax);
           }
           for (const pile of room.deadPiles) {
             expect(pile).to.have.lengthOf(11);
@@ -115,6 +123,39 @@ describe('Wild deal limits', () => {
       expect(slots[0]).to.be.at.least(1);
       expect(slots[1] - slots[0]).to.be.at.least(minGap(11, 2));
     }
+  });
+
+  it('2v2: the two sides never start more than one wild apart', () => {
+    const gaps = new Set();
+    for (let deal = 0; deal < 2000; deal++) {
+      const room = dealtRoom({ players: 4, ruleset: 'professional' });
+      const team = (a, b) =>
+        wildsIn(room.playerHands.get(a)) + wildsIn(room.playerHands.get(b));
+      gaps.add(Math.abs(team('p0', 'p2') - team('p1', 'p3')));
+    }
+    expect([...gaps].every((gap) => gap <= 1)).to.be.true;
+  });
+
+  it('a group cap counts its piles together and sends back a random wild', () => {
+    const keptBy = [0, 0];
+    for (let run = 0; run < 2000; run++) {
+      const deck = new Deck({ includeJokers: false });
+      // Both partners start with a wild of their own.
+      const a = [new Card('hearts', '2'), ...['3', '4', '5'].map((r) => new Card('clubs', r))];
+      const b = [new Card('spades', '2'), ...['6', '7', '8'].map((r) => new Card('clubs', r))];
+      deck.cards = deck.cards.filter((c) => !a.concat(b).some((x) => x.cardId === c.cardId));
+      deck.shuffle();
+      const before = deck.cards.length + a.length + b.length;
+      deck.limitWilds([{ group: [a, b], max: 1 }]);
+      expect(wildsIn(a) + wildsIn(b)).to.equal(1);
+      expect(a).to.have.lengthOf(4);
+      expect(b).to.have.lengthOf(4);
+      expect(deck.cards.length + a.length + b.length).to.equal(before);
+      keptBy[wildsIn(a) === 1 ? 0 : 1]++;
+    }
+    // Either partner may keep it.
+    expect(keptBy[0]).to.be.within(800, 1200);
+    expect(keptBy[1]).to.be.within(800, 1200);
   });
 
   it('a hand minimum of one tops every hand up to exactly one', () => {

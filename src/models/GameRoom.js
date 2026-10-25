@@ -682,13 +682,22 @@ class GameRoom {
 
       // Wilds are dealt scarce (WILD_DEAL): the extras go back to the stock,
       // which then spreads its wilds apart with a natural on top for the flip
-      // below.
+      // below. At a 2v2 table each pair of partners (seats 0 + 2, 1 + 3) also
+      // shares one cap, so neither side starts two wilds up.
+      const teamOf = ({ player }) => (player.playerIndex % 2 === 0 ? 'teamA' : 'teamB');
+      const teams = hands.length === 4
+        ? ['teamA', 'teamB'].map((team) => ({
+          group: hands.filter((hand) => teamOf(hand) === team).map(({ cards }) => cards),
+          max: WILD_DEAL.teamMax,
+        }))
+        : [];
       this.deck.limitWilds([
         ...hands.map(({ cards }) => ({
           cards,
           max: WILD_DEAL.handMax,
           min: WILD_DEAL.handMin,
         })),
+        ...teams,
         { cards: pozzetto1, max: WILD_DEAL.pozzettoMax },
         { cards: pozzetto2, max: WILD_DEAL.pozzettoMax },
       ]);

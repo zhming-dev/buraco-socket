@@ -14,8 +14,19 @@ const crypto = require('crypto');
  * spreads its wilds out (see Deck.spreadWilds). [handMin] 1 would instead give
  * every hand exactly one. The same limits apply to every seat, so no seat or
  * team gains from them.
+ *
+ * At a 2v2 table the two partners' hands together hold at most [teamMax]
+ * (owner, 2026-10-26: "max 1 kartu per tim 2vs2 atau 1 max per user untuk
+ * 1vs1"): one partner each holding a wild started that team two wilds up on a
+ * side with none. In 1v1 a team is one hand, so [handMax] already says it.
+ * [teamMax] 1 only works with [handMin] 0.
  */
-const WILD_DEAL = Object.freeze({ handMax: 1, handMin: 0, pozzettoMax: 2 });
+const WILD_DEAL = Object.freeze({
+  handMax: 1,
+  handMin: 0,
+  teamMax: 1,
+  pozzettoMax: 2,
+});
 
 /**
  * A card that can stand in for another: any 2, and a joker.
@@ -144,7 +155,11 @@ class Deck {
    * for a wild from the stock while the stock has one. Caps run first, for every
    * pile, so the wilds they free are the ones a `min` can draw on. Pile sizes
    * and the deck's card set never change.
-   * @param {{cards: Card[], max: number, min?: number}[]} piles
+   *
+   * A pile may instead be a `group` of piles that share one cap (a 2v2 team's
+   * two hands): over it, a random wild of the group goes back, from whichever
+   * pile holds it. A group has no `min`.
+   * @param {({cards: Card[], max: number, min?: number}|{group: Card[][], max: number})[]} piles
    */
   limitWilds(piles) {
     const randomIndex = (cards, pred) => {
@@ -158,14 +173,24 @@ class Deck {
       [pile[i], this.cards[s]] = [this.cards[s], pile[i]];
     };
 
-    for (const { cards, max } of piles) {
-      while (cards.filter(isWild).length > max) {
+    for (const { cards, group, max } of piles) {
+      const parts = group || [cards];
+      for (;;) {
+        const held = [];
+        for (const part of parts) {
+          part.forEach((card, i) => {
+            if (isWild(card)) held.push({ part, i });
+          });
+        }
+        if (held.length <= max) break;
         const s = randomIndex(this.cards, (c) => !isWild(c));
         if (s < 0) break;
-        trade(cards, randomIndex(cards, isWild), s);
+        const { part, i } = held[crypto.randomInt(held.length)];
+        trade(part, i, s);
       }
     }
     for (const { cards, min = 0 } of piles) {
+      if (!cards) continue;
       while (cards.filter(isWild).length < min) {
         const s = randomIndex(this.cards, isWild);
         const i = randomIndex(cards, (c) => !isWild(c));
