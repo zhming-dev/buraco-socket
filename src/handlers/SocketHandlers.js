@@ -3136,10 +3136,15 @@ class SocketHandlers {
    * Refusing the join ("Player is already in another active room") stranded
    * them — silently demoted to a SPECTATOR of the room they had just created —
    * until the ghost reaped itself minutes later. Release the stale seat instead
-   * and let the join go through:
-   *   - nobody else is connected to the old room → void it (no result, refund);
-   *   - someone is still playing there → the leaver forfeits, exactly as an
-   *     explicit leave_room would (opponent wins).
+   * and let the join go through, but only for a real ghost: nobody else is
+   * connected to the old room and no meld is down in its round → void it (no
+   * result, refund).
+   * A table that is still being played is NOT a ghost, and neither is a round
+   * with a meld on the table: a socket-less seat there is a player with a bad
+   * connection, and absence never ends a match (the seat is auto-played until
+   * they come back). Forfeiting it here turned a dropped connection plus a tap
+   * on another table — the app's "already in a game" gate fails open when the
+   * network is bad — into a lost match for the whole team. Those stay refused.
    * A seat that still has a live socket is a real double-play and stays refused.
    * A lobby (WAITING) seat is not handled here: that one has the backend's own
    * release proof (_verifyReleasedRoomSeat) and the restart seat-hold.
@@ -3169,6 +3174,23 @@ class SocketHandlers {
         p.socketId &&
         this.io.sockets.sockets.get(p.socketId)
     );
+    const meldsDown = this._roundHasMelds(previousRoom);
+    if (othersConnected || meldsDown) {
+      this._logRoomLifecycle('stale_seat_kept_for_live_table', {
+        roomId: previousRoom.roomId,
+        playerId,
+        targetRoomId: targetRoom.roomId,
+        via,
+        othersConnected,
+        meldsDown,
+        seatStatus: seat.status || null,
+      });
+      logger.warn(
+        `[JOIN_ROOM] ${playerId} has a verified seat in ${targetRoom.roomId} but is still seated at live room ` +
+          `${previousRoom.roomId} (${othersConnected ? 'others still playing' : 'a meld is down'}) — keeping that seat, not forfeiting it`
+      );
+      return false;
+    }
     this._logRoomLifecycle('stale_seat_released_for_new_room', {
       roomId: previousRoom.roomId,
       playerId,
@@ -3180,22 +3202,35 @@ class SocketHandlers {
     });
     logger.warn(
       `[JOIN_ROOM] ${playerId} has a verified seat in ${targetRoom.roomId} but was still bound to live room ` +
-        `${previousRoom.roomId} with no socket — ${othersConnected ? 'forfeiting that seat' : 'voiding that room (nobody left in it)'}`
+        `${previousRoom.roomId} with no socket — voiding that room (nobody left in it)`
     );
-    if (othersConnected) {
-      this._handlePlayerForfeit(null, previousRoom, playerId, seat, {
-        reason: String(previousRoom.hostPlayerId) === String(playerId) ? 'host_left' : 'opponent_left',
-      });
-    } else {
-      logger.runWithRoom(previousRoom.roomId, () =>
-        this._voidRoom(previousRoom, {
-          reason: 'abandoned',
-          message: 'Room ditutup — semua pemain sudah keluar',
-          lifecycleEvent: 'room_voided_all_players_gone',
-        })
-      );
-    }
+    logger.runWithRoom(previousRoom.roomId, () =>
+      this._voidRoom(previousRoom, {
+        reason: 'abandoned',
+        message: 'Room ditutup — semua pemain sudah keluar',
+        lifecycleEvent: 'room_voided_all_players_gone',
+      })
+    );
     return true;
+  }
+
+  /**
+   * A meld is on the table in a round still being played. From then on the
+   * match is never given up by a leave: the board offers KEEP only
+   * (leaveLockedByMelds on the client), and this server refuses whatever still
+   * asks for it — a kept seat abandoned from the hub, an emit buffered through
+   * a dropped connection, a join at another table. Between rounds the melds
+   * are the finished round's, and the room is not in progress.
+   * @param {import('../models/GameRoom')} room
+   * @returns {boolean}
+   * @private
+   */
+  _roundHasMelds(room) {
+    if (!room || room.isInProgress?.() !== true || !room.playerMelds) return false;
+    for (const melds of room.playerMelds.values()) {
+      if (Array.isArray(melds) && melds.length > 0) return true;
+    }
+    return false;
   }
 
   async _verifyReleasedRoomSeat(socket, targetRoom, previousRoom, playerId, reservation, desiredSeat = reservation.playerIndex) {
@@ -5375,6 +5410,23 @@ class SocketHandlers {
     // #11 multi-round: deliberately leaving during the round-over intermission is
     // leaving the MATCH, so it forfeits too — that is what settles the escrow and
     // cancels the pending next round instead of dealing to an empty seat.
+    // Once a meld is down in the round being played, the match can no longer be
+    // given up (see _roundHasMelds): the leave is refused, the seat stays the
+    // player's, and when the connection goes it is auto-played like any absent
+    // seat until they come back.
+    if (room && this._roundHasMelds(room)) {
+      this._logRoomLifecycle('leave_refused_melds_down', {
+        roomId: room.roomId,
+        playerId,
+        seat: leavingPlayer?.playerIndex ?? null,
+      });
+      logger.warn(`[LEAVE_ROOM] ${playerId} asked to leave ${room.roomId} with a meld down — refused, the seat stays theirs`);
+      socket.emit(
+        SocketEvents.ERROR,
+        ErrorHandler.createErrorResponse('A meld is on the table: the game goes on and your seat stays yours.', 'LEAVE_LOCKED_MELDS')
+      );
+      return;
+    }
     if (room && (room.isInProgress() || room.awaitingNextRound)) {
       this._handleForfeitOnLeave(socket, room, playerId, leavingPlayer);
       return;

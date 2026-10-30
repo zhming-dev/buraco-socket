@@ -245,4 +245,104 @@ describe('Leave-as-forfeit (in-progress)', () => {
     expect(data.matchWinnerId).to.not.equal(null);
     expect(data.matchWinnerIndex).to.not.equal(null);
   });
+
+  describe('a meld on the table: the match is never given up by a leave', () => {
+    function meldDown(room, playerId) {
+      // Any card group in the seat's melds counts; the leave rule only asks
+      // whether one is down, not what it is.
+      room.playerMelds.set(playerId, [[{ suit: 'hearts', rank: '5' }, { suit: 'hearts', rank: '6' }, { suit: 'hearts', rank: '7' }]]);
+    }
+
+    it('1v1: a leave_room after a meld is refused — no game_ended, the seat and the game stay', () => {
+      const service = new GameService();
+      services.push(service);
+      const room = startedRoom(service, 'r-meld-1v1');
+      meldDown(room, 'opp');
+
+      const emitted = [];
+      const registry = new Map();
+      const io = fakeIo(emitted, registry);
+      registry.set('sHost', fakeSocket('sHost', emitted));
+      registry.set('sOpp', fakeSocket('sOpp', emitted));
+      const handlers = new SocketHandlers(io, service);
+
+      handlers.handleLeaveRoom(fakeSocket('sHost', emitted));
+
+      expect(emitted.find((e) => e.event === 'game_ended'), 'no forfeit').to.equal(undefined);
+      expect(room.isInProgress()).to.equal(true);
+      expect(room.getPlayer('host'), 'the host keeps the seat').to.exist;
+      expect(service.getPlayerRoom('host')).to.equal(room);
+      const refusal = emitted.find((e) => e.scope === 'socket' && e.id === 'sHost' && e.event === 'error');
+      expect(refusal, 'the leaver is told why').to.exist;
+      expect(refusal.payload.code).to.equal('LEAVE_LOCKED_MELDS');
+    });
+
+    it("2v2: a leave_room after the OTHER team's meld is refused too — any meld on the table locks it", () => {
+      const service = new GameService();
+      services.push(service);
+      const room = service.createRoom('r-meld-2v2', 4);
+      service.joinRoom('r-meld-2v2', 'a0', 'A0', 's0');
+      service.joinRoom('r-meld-2v2', 'b1', 'B1', 's1');
+      service.joinRoom('r-meld-2v2', 'a2', 'A2', 's2');
+      service.joinRoom('r-meld-2v2', 'b3', 'B3', 's3');
+      room.startGame();
+      room.dealCards();
+      meldDown(room, 'b3');
+
+      const emitted = [];
+      const registry = new Map();
+      const io = fakeIo(emitted, registry);
+      ['s0', 's1', 's2', 's3'].forEach((s) => registry.set(s, fakeSocket(s, emitted)));
+      const handlers = new SocketHandlers(io, service);
+
+      handlers.handleLeaveRoom(fakeSocket('s2', emitted));
+
+      expect(emitted.find((e) => e.event === 'game_ended')).to.equal(undefined);
+      expect(room.isInProgress()).to.equal(true);
+      expect(room.getPlayers()).to.have.lengthOf(4);
+    });
+
+    it('the refused leaver then drops the connection: the seat stays, offline, the match goes on', async () => {
+      const service = new GameService();
+      services.push(service);
+      const room = startedRoom(service, 'r-meld-drop');
+      meldDown(room, 'host');
+
+      const emitted = [];
+      const registry = new Map();
+      const io = fakeIo(emitted, registry);
+      registry.set('sHost', fakeSocket('sHost', emitted));
+      registry.set('sOpp', fakeSocket('sOpp', emitted));
+      const handlers = new SocketHandlers(io, service);
+
+      handlers.handleLeaveRoom(fakeSocket('sOpp', emitted));
+      registry.delete('sOpp');
+      await handlers.handleDisconnect(fakeSocket('sOpp', emitted), 'transport close');
+      handlers._stopTurnTimer(room);
+
+      expect(emitted.find((e) => e.event === 'game_ended'), 'absence never ends the match').to.equal(undefined);
+      expect(room.isInProgress()).to.equal(true);
+      expect(room.getPlayer('opp')).to.exist;
+      expect(room.getPlayer('opp').isConnected).to.equal(false);
+    });
+
+    it('with no meld down yet a leave_room still forfeits (the existing rule)', () => {
+      const service = new GameService();
+      services.push(service);
+      startedRoom(service, 'r-no-meld');
+
+      const emitted = [];
+      const registry = new Map();
+      const io = fakeIo(emitted, registry);
+      registry.set('sHost', fakeSocket('sHost', emitted));
+      registry.set('sOpp', fakeSocket('sOpp', emitted));
+      const handlers = new SocketHandlers(io, service);
+
+      handlers.handleLeaveRoom(fakeSocket('sOpp', emitted));
+
+      const ended = emitted.find((e) => e.event === 'game_ended');
+      expect(ended).to.exist;
+      expect(ended.payload.reason).to.equal('opponent_left');
+    });
+  });
 });

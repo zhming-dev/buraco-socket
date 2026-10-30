@@ -14,7 +14,9 @@
  *      the ghost, and _rejectReservedJoin demoted them to a SPECTATOR of their own
  *      room until the ghost reaped itself minutes later. → a verified seat in a
  *      new room releases a stale (socket-less) seat in a live old room: void the
- *      old room when nobody is left in it, forfeit when someone still plays.
+ *      old room when nobody is left in it. A table someone still plays, or a
+ *      round with a meld down, is not a ghost: that seat is kept (refused), never
+ *      forfeited — absence never ends a match (2026-10-31).
  *   3. "Maintenance on" / "Announce restart" / "Restart process" made every
  *      client leave the table but left the rooms on the server — and the deploy
  *      drain then snapshotted and RESTORED them as ghosts. → the notice voids
@@ -120,9 +122,10 @@ describe('ghost rooms after a restart / a "leave the table" notice', () => {
       expect(service.getPlayerRoom('20')).to.equal(undefined);
     });
 
-    it('forfeits the stale seat when the opponent is still playing (same as an explicit leave)', () => {
+    it('keeps the stale seat (refuses, never forfeits) when the opponent is still playing', () => {
       const old = liveRoom(service, 'old');
-      // Opponent is live on sOpp; the host's seat has no socket (app lost).
+      // Opponent is live on sOpp; the host's seat has no socket — a bad
+      // connection, not a player who moved on.
       registry.set('sOpp', fakeSocket('sOpp', emitted));
       old.getPlayer('10').socketId = null;
       const fresh = service.createRoom('fresh', 2);
@@ -130,17 +133,27 @@ describe('ghost rooms after a restart / a "leave the table" notice', () => {
 
       const released = handlers._releaseStaleSeatForNewRoom(old, '10', fresh, { via: 'join_room' });
 
-      expect(released).to.equal(true);
-      expect(old.status).to.equal(GameRoomStatus.FINISHED);
-      expect(old.winnerId).to.equal('20');
-      const ended = emitted.find((e) => e.scope === 'room' && e.roomId === 'old' && e.event === SocketEvents.GAME_ENDED);
-      expect(ended.payload.reason).to.equal('host_left');
-      expect(ended.payload.matchEnded).to.equal(true);
-      expect(roomClosedFor('old')).to.have.lengthOf(0, 'a forfeit is a result, not a void');
+      expect(released).to.equal(false);
+      expect(service.getRoom('old')).to.equal(old);
+      expect(old.status).to.equal(GameRoomStatus.IN_PROGRESS);
+      expect(old.getPlayer('10'), 'the seat is still theirs').to.exist;
+      expect(emitted.some((e) => e.event === SocketEvents.GAME_ENDED), 'no forfeit').to.equal(false);
+      expect(roomClosedFor('old')).to.have.lengthOf(0);
+      expect(service.joinRoom('fresh', '10', 'Host', 'sNew').error).to.equal('Player is already in another active room');
+    });
 
-      const join = service.joinRoom('fresh', '10', 'Host', 'sNew');
-      expect(join.success).to.equal(true);
-      expect(service.getPlayerRoom('10')).to.equal(fresh);
+    it('keeps a socket-less table whose round has a meld down, even with nobody connected', () => {
+      const old = liveRoom(service, 'old');
+      for (const p of old.getPlayers()) { p.socketId = null; p.disconnect?.(); }
+      old.playerMelds.set('20', [[{ suit: 'spades', rank: '9' }, { suit: 'spades', rank: '10' }, { suit: 'spades', rank: 'J' }]]);
+      const fresh = service.createRoom('fresh', 2);
+      fresh.backendManaged = true;
+
+      expect(handlers._releaseStaleSeatForNewRoom(old, '10', fresh, { via: 'join_room' })).to.equal(false);
+      expect(service.getRoom('old')).to.equal(old);
+      expect(old.status).to.equal(GameRoomStatus.IN_PROGRESS);
+      expect(roomClosedFor('old')).to.have.lengthOf(0);
+      expect(closed).to.deep.equal([]);
     });
 
     it('still refuses a seat that has a LIVE socket (a real double-play)', () => {
