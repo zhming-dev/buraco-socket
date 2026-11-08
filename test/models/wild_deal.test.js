@@ -32,9 +32,11 @@ const wildSlots = (cards) =>
 
 /**
  * Smallest distance spreadWilds promises between two wilds of a pile that held
- * [count] cards and [wilds] wilds when it was spread: two thirds of a stretch.
+ * [count] cards and [wilds] wilds when it was spread: the first gap of
+ * WILD_DEAL.stockGaps the pile has room for.
  */
-const minGap = (count, wilds) => Math.ceil((2 * count) / (3 * wilds) - 1e-9);
+const minGap = (count, wilds) =>
+  WILD_DEAL.stockGaps.find((g) => 1 + (wilds - 1) * g <= count - 1) || 1;
 
 describe('Wild deal limits', () => {
   for (const players of [2, 4]) {
@@ -123,6 +125,25 @@ describe('Wild deal limits', () => {
       expect(slots[0]).to.be.at.least(1);
       expect(slots[1] - slots[0]).to.be.at.least(minGap(11, 2));
     }
+  });
+
+  it('stock wilds follow no fixed rhythm', () => {
+    // The old equal-stretch spread put a 1v1 stock's wilds 9-11 cards apart
+    // almost every time, so the next one was predictable.
+    const gaps = new Map();
+    for (let deal = 0; deal < 1000; deal++) {
+      const slots = wildSlots(dealtRoom({ players: 2, ruleset: 'professional' }).deck.cards);
+      for (let i = 1; i < slots.length; i++) {
+        const gap = slots[i] - slots[i - 1];
+        gaps.set(gap, (gaps.get(gap) || 0) + 1);
+      }
+    }
+    const all = [...gaps.values()].reduce((a, b) => a + b, 0);
+    const near = (gaps.get(5) || 0) + (gaps.get(6) || 0);
+    const far = [...gaps].filter(([gap]) => gap >= 15).reduce((a, [, c]) => a + c, 0);
+    expect(Math.min(...gaps.keys())).to.equal(WILD_DEAL.stockGaps[0]);
+    expect(near / all).to.be.above(0.1);
+    expect(far / all).to.be.above(0.1);
   });
 
   it('2v2: the two sides never start more than one wild apart', () => {

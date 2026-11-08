@@ -11,7 +11,7 @@ const crypto = require('crypto');
  * deal, di pozzetto masing2 max 2 wild card, trus di deck card itu menyesuaikan
  * dan pastikan kartu wild berjarak jauh2"). A hand holds at most [handMax], a
  * pozzetto at most [pozzettoMax]; every extra goes back to the stock, which then
- * spreads its wilds out (see Deck.spreadWilds). [handMin] 1 would instead give
+ * keeps its wilds apart (see Deck.spreadWilds). [handMin] 1 would instead give
  * every hand exactly one. The same limits apply to every seat, so no seat or
  * team gains from them.
  *
@@ -26,6 +26,11 @@ const WILD_DEAL = Object.freeze({
   handMin: 0,
   teamMax: 1,
   pozzettoMax: 2,
+  // Fewest cards between two wilds of the stock (see Deck.spreadWilds), and the
+  // smaller gaps to fall back on when a stock is too short for it. No 4: an even
+  // gap lines up with a 2- or 4-seat turn cycle, so the same side keeps drawing
+  // the next wild.
+  stockGaps: Object.freeze([5, 3, 2, 1]),
 });
 
 /**
@@ -201,12 +206,21 @@ class Deck {
   }
 
   /**
-   * Re-orders the deck so its wilds sit far apart. The deck is cut into as many
-   * equal stretches as it holds wilds and each wild lands at a random place in
-   * the middle third of its own stretch, so two wilds are always at least two
-   * thirds of a stretch apart (about 8 cards in a 1v1 stock) and never meet near
-   * a stretch boundary. The top card, which is the opening discard or the next
-   * draw, is always a natural. Naturals keep their shuffled order.
+   * Re-orders the deck so no two wilds sit close together: every wild is at
+   * least WILD_DEAL.stockGaps[0] cards from the next one (a smaller gap from
+   * that list only when the deck is too short for it), and the top card, which
+   * is the opening discard or the next draw, is always a natural. Naturals keep
+   * their shuffled order.
+   *
+   * WHERE the wilds land is otherwise uniformly random over every placement
+   * that keeps the gap. The version before cut the deck into equal stretches
+   * with one wild in the middle of each, which put the wilds on a fixed rhythm
+   * (every 9-11 draws at a 1v1 table, every 6-8 at 2v2 — prod replays
+   * 2026-11-01..08): a player who saw one wild knew when the next one was due,
+   * and the rhythm lined up with the turn cycle often enough that one side got
+   * two or more stock wilds more than the other in 45% of 2v2 rounds, against
+   * 37% with this placement (owner, 2026-11-08: "user bisa dapet urutan dengan
+   * urutan aneh kaya mau memenangkan 1 player atau 1 team").
    */
   spreadWilds() {
     const wilds = this.cards.filter(isWild);
@@ -215,18 +229,19 @@ class Deck {
 
     const n = this.cards.length;
     const k = wilds.length;
-    const stretch = n / k;
-    const slots = new Set();
-    let previous = 0; // index 0 stays a natural
+    // Slots 1..n-1 are open (0 stays a natural); k wilds [gap] apart need
+    // 1 + (k - 1) * gap of them.
+    const gap = WILD_DEAL.stockGaps.find((g) => 1 + (k - 1) * g <= n - 1) || 1;
+    // Uniform over valid placements: choose k of `free` compact slots, then
+    // push the i-th one (gap - 1) * i further down.
+    const free = n - 1 - (k - 1) * (gap - 1);
+    const pool = Array.from({ length: free }, (_, i) => i);
     for (let i = 0; i < k; i++) {
-      const lo = Math.ceil(i * stretch + stretch / 3);
-      const hi = Math.floor(i * stretch + (stretch * 2) / 3);
-      const at = hi > lo ? crypto.randomInt(lo, hi + 1) : lo;
-      // Pushed past the previous wild and kept clear of the end, so every wild
-      // gets its own slot even in a stock with almost no naturals left.
-      previous = Math.min(Math.max(at, previous + 1), n - (k - i));
-      slots.add(previous);
+      const j = i + crypto.randomInt(free - i);
+      [pool[i], pool[j]] = [pool[j], pool[i]];
     }
+    const picked = pool.slice(0, k).sort((a, b) => a - b);
+    const slots = new Set(picked.map((p, i) => 1 + p + i * (gap - 1)));
 
     let w = 0;
     let m = 0;
