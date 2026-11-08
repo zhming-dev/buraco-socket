@@ -5573,6 +5573,12 @@ class SocketHandlers {
       roundNumber: room.roundNumber,
       forfeitedBy: leavingPlayer ? leavingPlayer.playerIndex : null,
       forfeitedByName: leavingPlayer ? leavingPlayer.playerName : null,
+      // Every seat's hand as the match stopped, for the end board's "View
+      // desk" — the same field the scored round end carries. Without it a
+      // forfeit / abandoned table could only show card backs there. Safe for
+      // the same reason: the room is FINISHED before this is emitted, so no
+      // move can act on it.
+      finalHands: this._finalHandsOf(room),
       timestamp: new Date().toISOString(),
     };
     // Persist as the terminal round-end payload so any reader (reconnect
@@ -9210,6 +9216,20 @@ class SocketHandlers {
   _replayIntermissionCard(socket, room) {
     if (!socket || !room?.awaitingNextRound || !room.lastRoundEndPayload) return;
     socket.emit(SocketEvents.GAME_ENDED, this._roundEndReplayPayload(room));
+  }
+
+  /**
+   * Every seat's current hand keyed by playerIndex — the `finalHands` shape
+   * ActionHandlers._finalizeWith puts on a scored round end.
+   * @param {import('../models/GameRoom')} room
+   * @returns {Object<number, Array>}
+   */
+  _finalHandsOf(room) {
+    const finalHands = {};
+    room.getPlayers().forEach((p) => {
+      finalHands[p.playerIndex] = room.playerHands.get(p.playerId) || [];
+    });
+    return finalHands;
   }
 
   /**

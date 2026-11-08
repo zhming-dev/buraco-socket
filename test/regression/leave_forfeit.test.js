@@ -67,6 +67,9 @@ describe('Leave-as-forfeit (in-progress)', () => {
     expect(ended.payload.winnerIndex).to.equal(1);
     expect(ended.payload.hostLeft).to.equal(true);
     expect(ended.payload.roomClosed).to.equal(true);
+    // The end board's View desk reveals every seat's hand, forfeit or not.
+    expect(Object.keys(ended.payload.finalHands).map(Number)).to.have.members([0, 1]);
+    expect(ended.payload.finalHands[1]).to.have.length.greaterThan(0);
     // Room is kept for a reconnect grace (not deleted immediately), but it IS
     // finished and scheduled for teardown.
     const graceHost = service.getRoom('r-host');
